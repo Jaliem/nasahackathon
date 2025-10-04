@@ -3,23 +3,42 @@
 import { useState } from 'react'
 import dynamic from 'next/dynamic'
 import Navigation from '@/components/Navigation'
+import type { RegionData } from '@/components/MapComponent'
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), {
   ssr: false,
   loading: () => <div className="h-full flex items-center justify-center text-gray-400">Loading map...</div>,
 })
 
-export interface RegionData {
-  name: string
-  temperature: number
-  airQuality: number
-  floodRisk: number
-  lat: number
-  lng: number
-}
-
 export default function Dashboard() {
   const [selectedRegion, setSelectedRegion] = useState<RegionData | null>(null)
+  const [mapKey] = useState(() => `dashboard-map-${Date.now()}`)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResult, setSearchResult] = useState<{ lat: number; lng: number; name: string } | null>(null)
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!searchQuery.trim()) return
+
+    try {
+      // Using OpenStreetMap Nominatim API for free geocoding
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`
+      )
+      const data = await response.json()
+
+      if (data && data.length > 0) {
+        const result = data[0]
+        setSearchResult({
+          lat: parseFloat(result.lat),
+          lng: parseFloat(result.lon),
+          name: result.display_name
+        })
+      }
+    } catch (error) {
+      console.error('Error searching location:', error)
+    }
+  }
 
   return (
     <div className="flex flex-col h-screen bg-[#0f0f0f]">
@@ -27,7 +46,26 @@ export default function Dashboard() {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 relative">
-          <MapComponent onRegionSelect={setSelectedRegion} />
+          {/* Search Bar */}
+          <div className="absolute top-4 left-4 z-[1000] w-80">
+            <form onSubmit={handleSearch} className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Search any city (e.g., Jakarta, Tokyo, Paris)..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 px-4 py-2 bg-[#1a1a1a] border border-gray-700 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-gray-500 rounded shadow-lg"
+              />
+              <button
+                type="submit"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow-lg"
+              >
+                Search
+              </button>
+            </form>
+          </div>
+
+          <MapComponent key={mapKey} onRegionSelect={setSelectedRegion} searchResult={searchResult} />
         </div>
 
         <aside className="w-96 bg-[#1a1a1a] overflow-y-auto border-l border-gray-800">
@@ -125,12 +163,31 @@ interface PredictButtonProps {
   region: RegionData
 }
 
+interface PredictionData {
+  prediction: string
+  data?: {
+    forecast?: Array<{ day: number; temp?: number; aqi?: number; quality?: string }>
+    metadata?: {
+      dataSource?: string
+      gibsLayer?: string
+      gibsLayers?: string[]
+      observationDate?: string
+      spatialResolution?: string
+    }
+    pollutants?: Record<string, number | string>
+    factors?: Record<string, number | string>
+    recommendations?: string[]
+  }
+}
+
 function PredictButton({ type, region }: PredictButtonProps) {
   const [loading, setLoading] = useState(false)
-  const [prediction, setPrediction] = useState<string | null>(null)
+  const [predictionData, setPredictionData] = useState<PredictionData | null>(null)
 
   const handlePredict = async () => {
     setLoading(true)
+    console.log(`🎯 Fetching ${type} prediction for:`, { lat: region.lat, lng: region.lng })
+
     try {
       const response = await fetch(`/api/predict/${type}`, {
         method: 'POST',
@@ -138,18 +195,35 @@ function PredictButton({ type, region }: PredictButtonProps) {
         body: JSON.stringify({ lat: region.lat, lng: region.lng }),
       })
       const data = await response.json()
-      setPrediction(data.prediction || data.message)
+
+      console.log(`📊 ${type} prediction received:`, data)
+      console.log(`🛰️  GIBS Metadata:`, data.data?.metadata)
+
+      if (type === 'air-quality' && data.data?.pollutants) {
+        console.log('💨 Pollutants:', data.data.pollutants)
+      }
+
+      if (type === 'flood' && data.data?.factors) {
+        console.log('🌊 Flood Factors:', data.data.factors)
+      }
+
+      if (type === 'temperature' && data.data?.forecast) {
+        console.log('🌡️  Temperature Forecast:', data.data.forecast)
+      }
+
+      setPredictionData(data)
     } catch (error) {
-      setPrediction('Error generating prediction')
+      console.error(`❌ Error fetching ${type} prediction:`, error)
+      setPredictionData({ prediction: 'Error generating prediction' })
     } finally {
       setLoading(false)
     }
   }
 
   const labels = {
-    temperature: 'Temperature',
-    'air-quality': 'Air Quality',
-    flood: 'Flood Risk',
+    temperature: 'Temperature Forecast',
+    'air-quality': 'Air Quality Forecast',
+    flood: 'Flood Risk Assessment',
   }
 
   return (
@@ -161,9 +235,80 @@ function PredictButton({ type, region }: PredictButtonProps) {
       >
         {loading ? 'Loading...' : labels[type]}
       </button>
-      {prediction && (
-        <div className="p-3 bg-[#222] border border-gray-700 text-xs text-gray-400">
-          {prediction}
+      {predictionData && (
+        <div className="p-3 bg-[#222] border border-gray-700 text-xs space-y-3">
+          <p className="text-gray-400">{predictionData.prediction}</p>
+
+          {predictionData.data?.forecast && (
+            <div className="pt-2 border-t border-gray-700">
+              <p className="text-gray-500 mb-2">7-Day Forecast:</p>
+              <div className="space-y-1">
+                {predictionData.data.forecast.slice(0, 3).map((item) => (
+                  <div key={item.day} className="flex justify-between text-gray-400">
+                    <span>Day {item.day}:</span>
+                    <span>
+                      {item.temp ? `${item.temp}°C` : item.aqi ? `AQI ${item.aqi}` : '-'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {predictionData.data?.metadata && (
+            <div className="pt-2 border-t border-gray-700">
+              <p className="text-gray-500 mb-1">Data Source:</p>
+              <p className="text-gray-400">{predictionData.data.metadata.dataSource}</p>
+              {predictionData.data.metadata.observationDate && (
+                <p className="text-gray-500 mt-1">
+                  Date: {predictionData.data.metadata.observationDate}
+                </p>
+              )}
+              {predictionData.data.metadata.spatialResolution && (
+                <p className="text-gray-500">
+                  Resolution: {predictionData.data.metadata.spatialResolution}
+                </p>
+              )}
+            </div>
+          )}
+
+          {predictionData.data?.pollutants && (
+            <div className="pt-2 border-t border-gray-700">
+              <p className="text-gray-500 mb-1">Pollutants:</p>
+              <div className="grid grid-cols-2 gap-1">
+                {Object.entries(predictionData.data.pollutants).slice(0, 4).map(([key, value]) => (
+                  <div key={key} className="text-gray-400">
+                    {key.toUpperCase()}: {value}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {predictionData.data?.factors && (
+            <div className="pt-2 border-t border-gray-700">
+              <p className="text-gray-500 mb-1">Risk Factors:</p>
+              <div className="space-y-1">
+                {Object.entries(predictionData.data.factors).slice(0, 3).map(([key, value]) => (
+                  <div key={key} className="flex justify-between text-gray-400">
+                    <span className="capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
+                    <span>{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {predictionData.data?.recommendations && (
+            <div className="pt-2 border-t border-gray-700">
+              <p className="text-gray-500 mb-1">Recommendations:</p>
+              <ul className="list-disc list-inside text-gray-400 space-y-1">
+                {predictionData.data.recommendations.slice(0, 2).map((rec, idx) => (
+                  <li key={idx} className="text-xs">{rec}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>

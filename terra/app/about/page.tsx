@@ -30,7 +30,7 @@ export default function About() {
                 issues effectively.
               </p>
               <p className="text-gray-400 leading-relaxed">
-                Terra was built to bridge this gap by making NASA's Earth observation data accessible and
+                Terra was built to bridge this gap by making NASA&apos;s Earth observation data accessible and
                 actionable for urban planners, enabling evidence-based decisions that improve resilience
                 and quality of life.
               </p>

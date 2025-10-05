@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { MapContainer, TileLayer, Popup, Marker, useMapEvents, Rectangle, GeoJSON, Circle, ZoomControl } from 'react-leaflet'
+import { MapContainer, TileLayer, Popup, Marker, useMapEvents, Rectangle, GeoJSON, Circle } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Feature, FeatureCollection, Geometry, GeoJsonObject } from 'geojson'
@@ -323,14 +323,6 @@ interface ApiData {
   floodRisk: number
 }
 
-interface WaqiStation {
-  uid: number
-  aqi: string | number
-  station: {
-    name: string
-    geo: [number, number]
-  }
-}
 
 interface UrbanPlanningPoint {
   lat: number
@@ -379,15 +371,9 @@ export default function MapComponent({
   const [mounted, setMounted] = useState(false)
   const [mapId] = useState(() => `map-${Math.random().toString(36).substr(2, 9)}`)
   const [clickedLocation, setClickedLocation] = useState<RegionData | null>(null)
-  const [apiData, setApiData] = useState<ApiData | null>(null)
   const [isLoadingApi, setIsLoadingApi] = useState(false)
   const [map, setMap] = useState<L.Map | null>(null)
-  const [urbanPlanningGrid, setUrbanPlanningGrid] = useState<UrbanPlanningGrid[]>([])
-  const [isGeneratingGrid, setIsGeneratingGrid] = useState(false)
-  const [analysisMode, setAnalysisMode] = useState<'grid' | 'region'>('region')
-  const [selectedLocation, setSelectedLocation] = useState('')
-  const [regionData, setRegionData] = useState<UrbanPlanningGrid | null>(null)
-  const [isPlanningPanelCollapsed, setIsPlanningPanelCollapsed] = useState(false)
+  const [urbanPlanningGrid] = useState<UrbanPlanningGrid[]>([])
   const [selectedCountryGeometry, setSelectedCountryGeometry] = useState<Feature | FeatureCollection | null>(null)
   const [overlayMetrics, setOverlayMetrics] = useState<{ temperature: number; airQuality: number; floodRisk: number } | null>(null)
   const [highlightCircle, setHighlightCircle] = useState<{ center: [number, number]; radius: number } | null>(null)
@@ -706,348 +692,9 @@ export default function MapComponent({
     return 'critical'
   }
 
-  // Analyze entire region (city/country) - much more efficient than grid
-  const analyzeRegion = async (locationName: string) => {
-    if (!map) return
-
-    setIsGeneratingGrid(true)
-    console.log(`Analyzing region: ${locationName}`)
-    setWaterGeometry(null)
-
-    try {
-      // Geocode the location
-      setOverlayMetrics(null)
-
-      const geoResponse = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=jsonv2&polygon_geojson=1&q=${encodeURIComponent(locationName)}&limit=1`
-      )
-      const geoData = await geoResponse.json()
-
-      if (!geoData || geoData.length === 0) {
-        console.error('Location not found')
-        setIsGeneratingGrid(false)
-        return
-      }
-
-      const location = geoData[0]
-      const lat = parseFloat(location.lat)
-      const lng = parseFloat(location.lon)
-      const boundingBox = location.boundingbox // [south, north, west, east]
-
-      console.log(`📍 Found: ${location.display_name}`, { lat, lng, boundingBox })
-
-      // Fly to location
-      map.flyTo([lat, lng], 12, { duration: 1.5 })
-      setLastClickedCoords({ lat, lng })
-
-      setSelectedCountryGeometry(null)
-
-      const south = parseFloat(boundingBox[0])
-      const north = parseFloat(boundingBox[1])
-      const west = parseFloat(boundingBox[2])
-      const east = parseFloat(boundingBox[3])
-      const fallbackBounds: [number, number, number, number] = [south, west, north, east]
-
-      const featureFromSearch = location.geojson
-        ? buildFeatureFromGeometry(location.geojson as Geometry, { name: location.display_name })
-        : null
-      let geometryCountryName: string | undefined = location.display_name
-
-      if (featureFromSearch) {
-        const applied = applyRegionGeometry({
-          geometry: featureFromSearch,
-          bounds: fallbackBounds,
-          properties: { name: location.display_name },
-          fitBounds: true,
-        })
-
-        if (!applied) {
-          const geometryResult = await fetchCountryGeometry(lat, lng, {
-            fitBounds: true,
-            fallbackBounds,
-            properties: { name: location.display_name },
-          })
-
-          if (geometryResult.countryName) {
-            geometryCountryName = geometryResult.countryName
-          }
-          if (geometryResult.bounds) {
-            fetchWaterGeometry(geometryResult.bounds)
-          }
-        } else {
-          fetchWaterGeometry(fallbackBounds)
-        }
-      } else {
-        const geometryResult = await fetchCountryGeometry(lat, lng, {
-          fitBounds: true,
-          fallbackBounds,
-          properties: { name: location.display_name },
-        })
-        if (geometryResult.countryName) {
-          geometryCountryName = geometryResult.countryName
-        }
-        if (geometryResult.bounds) {
-          fetchWaterGeometry(geometryResult.bounds)
-        }
-      }
-
-      // Fetch data for the center point of the region
-      const [tempResponse, aqResponse, floodResponse] = await Promise.all([
-        fetch('/api/predict/temperature', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lng }),
-        }),
-        fetch('/api/predict/air-quality', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lng }),
-        }),
-        fetch('/api/predict/flood', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lng }),
-        }),
-      ])
-
-      const [tempData, aqData, floodData] = await Promise.all([
-        tempResponse.json(),
-        aqResponse.json(),
-        floodResponse.json(),
-      ])
-
-      const temp = tempData.data?.currentTemp || 22
-      const aqi = aqData.data?.currentAQI || 50
-      const flood = floodData.data?.overallRisk || 30
-
-      const riskScore = calculateUrbanRiskScore(temp, aqi, flood)
-      const habitability = getHabitability(riskScore)
-
-      // Calculate approximate area
-      const latRange = north - south
-      const lngRange = east - west
-      const areaKm2 = (latRange * 111) * (lngRange * 111 * Math.cos(lat * Math.PI / 180))
-
-      const { area, population } = calculateDevelopmentMetrics(habitability, riskScore, areaKm2)
-      const developmentType = getDevelopmentType(habitability, temp, flood)
-
-      const regionAnalysis: UrbanPlanningGrid = {
-        id: `region-${locationName}`,
-        bounds: [[south, west], [north, east]],
-        centerLat: lat,
-        centerLng: lng,
-        temperature: Math.round(temp * 10) / 10,
-        airQuality: Math.round(aqi),
-        floodRisk: Math.round(flood),
-        urbanRiskScore: riskScore,
-        habitability,
-        area,
-        population,
-        developmentType,
-        name: geometryCountryName || location.display_name,
-        gridRow: 0,
-        gridCol: 0,
-      }
-
-      setRegionData(regionAnalysis)
-      setUrbanPlanningGrid([regionAnalysis])
-      setOverlayMetrics({
-        temperature: regionAnalysis.temperature,
-        airQuality: regionAnalysis.airQuality,
-        floodRisk: regionAnalysis.floodRisk,
-      })
-      console.log(`Region analysis complete for ${locationName}`)
-
-    } catch (error) {
-      console.error('Error analyzing region:', error)
-    } finally {
-      setIsGeneratingGrid(false)
-    }
-  }
-
-  // Generate urban planning grid for development analysis
-  const generateUrbanPlanningGrid = async () => {
-    if (!map) return
-
-    const zoom = map.getZoom()
-    
-    // Grid requires higher zoom for meaningful analysis
-    if (zoom < 12) {
-      console.log('Zoom in more to generate development grid (current zoom:', zoom, ', need: 12+)')
-      setUrbanPlanningGrid([])
-      return
-    }
-
-    // Prevent multiple simultaneous requests
-    if (isGeneratingGrid) {
-      console.log('Already generating grid, skipping...')
-      return
-    }
-
-    setIsGeneratingGrid(true)
-    console.log('Generating urban planning development grid...')
-
-    const bounds = map.getBounds()
-    const center = bounds.getCenter()
-
-    // Define fixed cell size in kilometers based on zoom level
-    // Higher zoom = smaller cells for more detail
-    const cellSizeKm = zoom >= 15 ? 2 : zoom >= 14 ? 5 : zoom >= 13 ? 10 : 15
-
-    // Convert km to degrees (approximately)
-    const latDegreesPerKm = 1 / 111
-    const lngDegreesPerKm = 1 / (111 * Math.cos(center.lat * Math.PI / 180))
-
-    const cellLatSize = cellSizeKm * latDegreesPerKm
-    const cellLngSize = cellSizeKm * lngDegreesPerKm
-
-    // Calculate how many cells fit in the current view
-    const latRange = bounds.getNorth() - bounds.getSouth()
-    const lngRange = bounds.getEast() - bounds.getWest()
-
-    const numLatCells = Math.ceil(latRange / cellLatSize)
-    const numLngCells = Math.ceil(lngRange / cellLngSize)
-
-    // Limit maximum cells to prevent excessive API calls
-    const maxCells = 9 // Maximum 3x3 grid = 27 API calls
-    const totalCells = numLatCells * numLngCells
-
-    if (totalCells > maxCells) {
-      console.log(`Too many cells (${totalCells}), zoom in more or reduce area. Maximum: ${maxCells} cells`)
-      setIsGeneratingGrid(false)
-      return
-    }
-
-    // Calculate cell area in square kilometers
-    const cellAreaKm2 = cellSizeKm * cellSizeKm
-
-    console.log(`Creating ${numLatCells}x${numLngCells} development grid (${totalCells} cells of ${cellSizeKm}km², ${totalCells * 3} API calls)...`)
-
-    const gridCells: UrbanPlanningGrid[] = []
-
-    try {
-      for (let row = 0; row < numLatCells; row++) {
-        for (let col = 0; col < numLngCells; col++) {
-          const south = bounds.getSouth() + (row * cellLatSize)
-          const north = bounds.getSouth() + ((row + 1) * cellLatSize)
-          const west = bounds.getWest() + (col * cellLngSize)
-          const east = bounds.getWest() + ((col + 1) * cellLngSize)
-          
-          const centerLat = (south + north) / 2
-          const centerLng = (west + east) / 2
-
-          // Fetch API data with timeout
-          const timeout = 5000
-          const controller = new AbortController()
-          const timeoutId = setTimeout(() => controller.abort(), timeout)
-
-          try {
-            const [tempResponse, aqResponse, floodResponse] = await Promise.all([
-              fetch('/api/predict/temperature', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ lat: centerLat, lng: centerLng }),
-                signal: controller.signal,
-              }),
-              fetch('/api/predict/air-quality', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ lat: centerLat, lng: centerLng }),
-                signal: controller.signal,
-              }),
-              fetch('/api/predict/flood', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ lat: centerLat, lng: centerLng }),
-                signal: controller.signal,
-              }),
-            ])
-
-            clearTimeout(timeoutId)
-
-            if (!tempResponse.ok || !aqResponse.ok || !floodResponse.ok) {
-              throw new Error('API request failed')
-            }
-
-            const [tempData, aqData, floodData] = await Promise.all([
-              tempResponse.json(),
-              aqResponse.json(),
-              floodResponse.json(),
-            ])
-
-            const temp = tempData.data?.currentTemp || (18 + Math.random() * 20)
-            const aqi = aqData.data?.currentAQI || (25 + Math.random() * 75)
-            const flood = floodData.data?.overallRisk || (Math.random() * 70)
-
-            const riskScore = calculateUrbanRiskScore(temp, aqi, flood)
-            const habitability = getHabitability(riskScore)
-            const { area, population } = calculateDevelopmentMetrics(habitability, riskScore, cellAreaKm2)
-            const developmentType = getDevelopmentType(habitability, temp, flood)
-
-            gridCells.push({
-              id: `grid-${row}-${col}`,
-              bounds: [[south, west], [north, east]],
-              centerLat,
-              centerLng,
-              temperature: Math.round(temp * 10) / 10,
-              airQuality: Math.round(aqi),
-              floodRisk: Math.round(flood),
-              urbanRiskScore: riskScore,
-              habitability,
-              area,
-              population,
-              developmentType,
-              name: `Grid Cell ${row + 1}-${col + 1}`,
-              gridRow: row,
-              gridCol: col,
-            })
-
-          } catch (fetchError) {
-            console.warn(`Failed to fetch data for grid cell [${row},${col}]:`, fetchError)
-            // Create cell with default values
-            gridCells.push({
-              id: `grid-${row}-${col}`,
-              bounds: [[south, west], [north, east]],
-              centerLat,
-              centerLng,
-              temperature: 22,
-              airQuality: 50,
-              floodRisk: 30,
-              urbanRiskScore: 50,
-              habitability: 'moderate',
-              area: Math.round(cellAreaKm2 * 100) / 100,
-              population: Math.round(cellAreaKm2 * 4000),
-              developmentType: 'mixed',
-              name: `Grid Cell ${row + 1}-${col + 1}`,
-              gridRow: row,
-              gridCol: col,
-            })
-          }
-
-          // Add delay between requests to avoid rate limiting
-          if (row < numLatCells - 1 || col < numLngCells - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500))
-          }
-        }
-      }
-
-      console.log(`Generated ${gridCells.length} grid cells for development analysis`)
-      setUrbanPlanningGrid(gridCells)
-    } catch (error) {
-      console.error('Error generating urban planning grid:', error)
-      setUrbanPlanningGrid([])
-    } finally {
-      setIsGeneratingGrid(false)
-    }
-  }
 
 
 
-  // Clear grid data when switching modes
-  useEffect(() => {
-    setUrbanPlanningGrid([])
-    setRegionData(null)
-  }, [analysisMode])
 
   // Handle search result
   const fetchApiData = useCallback(async (lat: number, lng: number): Promise<ApiData | null> => {
@@ -1088,11 +735,9 @@ export default function MapComponent({
         floodRisk: floodData.data?.overallRisk || 0,
       }
 
-      setApiData(apiResults)
       return apiResults
     } catch (error) {
       console.error('Error fetching API data for popup:', error)
-      setApiData(null)
       return null
     } finally {
       setIsLoadingApi(false)
@@ -1120,7 +765,6 @@ export default function MapComponent({
       }
 
       setClickedLocation(regionData)
-      setApiData(null)
       setOverlayMetrics(null)
       setSelectedCountryGeometry(null)
       setHighlightCircle(null)
@@ -1173,7 +817,7 @@ export default function MapComponent({
     }
 
     run()
-  }, [searchResult, map, fetchCountryGeometry, fetchApiData, fetchWaterGeometry])
+  }, [searchResult, map, fetchCountryGeometry, fetchApiData, fetchWaterGeometry, onRegionSelect])
 
   const handleMapClick = async (lat: number, lng: number) => {
     // Normalize coordinates to valid ranges
@@ -1200,7 +844,6 @@ export default function MapComponent({
 
     // Set clicked location to show popup
     setClickedLocation(regionData)
-    setApiData(null) // Reset previous API data
     setOverlayMetrics(null)
 
     const geometryResult = await fetchCountryGeometry(normalizedLat, normalizedLng, {

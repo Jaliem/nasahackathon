@@ -209,7 +209,7 @@ export default function Home() {
                                 <BotIcon />
                             </div>
                             <div className="bg-black rounded-lg rounded-tl-none p-3 text-sm border-gray-700 border">
-                                <p>Welcome! I'm TerraBot. Ask me anything about urban environmental data or development suitability.</p>
+                                <p>Welcome! I&apos;m TerraBot. Ask me anything about urban environmental data or development suitability.</p>
                             </div>
                         </div>
 
@@ -239,7 +239,7 @@ export default function Home() {
                         Go beyond dashboards. TerraBot is your personal environmental analyst. Ask complex questions in plain language and get instant, data-driven answers and development suitability assessments.
                     </p>
                     <p className="mt-4 text-gray-400 text-justify">
-                        It's designed to democratize data, making critical insights accessible to everyone from city planners to community stakeholders, fostering a more collaborative and informed decision-making process.
+                        It&apos;s designed to democratize data, making critical insights accessible to everyone from city planners to community stakeholders, fostering a more collaborative and informed decision-making process.
                     </p>
                 </div>
             </div>

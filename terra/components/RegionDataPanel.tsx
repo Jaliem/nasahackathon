@@ -78,11 +78,6 @@ const overlayLegendMap: Record<Exclude<OverlayType, 'none'>, { title: string; en
   },
 }
 
-const gibsOverlayLabels: Record<GIBSOverlayType, string> = {
-  temperature: 'Daytime Land Surface Temperature',
-  'air-quality': 'Aerosol Optical Depth',
-  flood: 'Flood / Precipitation Rate',
-}
 
 function DataCard({ title, value, risk, overlayType, activeOverlay, onSelectOverlay }: DataCardProps) {
   const riskColors = {
@@ -185,30 +180,6 @@ function MapModeToggle({ mapMode, onChange }: { mapMode: MapMode; onChange: (mod
   )
 }
 
-function GibsControls({
-  gibsOverlay,
-  onGibsOverlayChange,
-  onOverlaySet,
-}: {
-  gibsOverlay: GIBSOverlayType
-  onGibsOverlayChange: (overlay: GIBSOverlayType) => void
-  onOverlaySet: (overlay: OverlayType) => void
-}) {
-  const gibsOptions: Array<{ id: GIBSOverlayType; label: string; hint: string; activeClass: string }> = [
-    { id: 'temperature', label: '☀ Daytime Land Surface', hint: 'Surface temperature', activeClass: 'bg-orange-600 text-white' },
-    { id: 'air-quality', label: '💨 Aerosol Optical Depth', hint: 'Atmospheric particles', activeClass: 'bg-purple-600 text-white' },
-    { id: 'flood', label: '🌊 Flood & Precipitation', hint: 'Hydrology insights', activeClass: 'bg-blue-600 text-white' },
-  ]
-
-  const legendEntries = [
-    { color: 'bg-green-500', label: 'Low' },
-    { color: 'bg-yellow-500', label: 'Moderate' },
-    { color: 'bg-orange-500', label: 'High' },
-    { color: 'bg-red-600', label: 'Critical' },
-  ]
-
-  return null
-}
 
 function OverlayControls({ activeOverlay, onToggle, overlayState }: {
   activeOverlay: OverlayType
@@ -270,7 +241,6 @@ export default function RegionDataPanel({
   overlayState,
   mapMode,
   onMapModeChange,
-  gibsOverlay,
   onGibsOverlayChange,
 }: RegionDataPanelProps) {
   const syncGibsOverlay = (overlay: OverlayType) => {
@@ -281,13 +251,6 @@ export default function RegionDataPanel({
 
   const handleOverlaySelect = (overlay: OverlayType) => {
     onOverlayToggle(overlay)
-    syncGibsOverlay(overlay)
-  }
-
-  const handleOverlaySet = (overlay: OverlayType) => {
-    if (overlay !== activeOverlay) {
-      onOverlayToggle(overlay)
-    }
     syncGibsOverlay(overlay)
   }
 

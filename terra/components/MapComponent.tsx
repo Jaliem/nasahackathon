@@ -366,10 +366,10 @@ export default function MapComponent({
       if (data.elements && data.elements.length > 0) {
         const features: Feature[] = []
 
-        data.elements.forEach((element: any) => {
+        data.elements.forEach((element: Record<string, unknown>) => {
           if (element.type === 'way' && element.geometry) {
             // Convert way to polygon
-            const coordinates = element.geometry.map((node: any) => [node.lon, node.lat])
+            const coordinates = (element.geometry as Array<{ lon: number; lat: number }>).map((node) => [node.lon, node.lat])
             // Close the polygon if not already closed
             if (coordinates.length > 0 &&
                 (coordinates[0][0] !== coordinates[coordinates.length - 1][0] ||
@@ -388,10 +388,10 @@ export default function MapComponent({
             }
           } else if (element.type === 'relation' && element.members) {
             // Handle multipolygon relations
-            const outerWays = element.members.filter((m: any) => m.role === 'outer' && m.geometry)
+            const outerWays = (element.members as Array<{ role: string; geometry?: Array<{ lon: number; lat: number }> }>).filter((m) => m.role === 'outer' && m.geometry)
             if (outerWays.length > 0) {
-              const polygons = outerWays.map((way: any) =>
-                way.geometry.map((node: any) => [node.lon, node.lat])
+              const polygons = outerWays.map((way) =>
+                way.geometry!.map((node) => [node.lon, node.lat])
               )
               features.push({
                 type: 'Feature',

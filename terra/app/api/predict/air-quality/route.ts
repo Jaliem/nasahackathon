@@ -5,7 +5,24 @@ const GIBS_BASE_URL = 'https://gibs.earthdata.nasa.gov/wmts/epsg4326/best'
 
 // WAQI (World Air Quality Index) API
 const WAQI_BASE_URL = 'https://api.waqi.info'
-const WAQI_API_KEY = process.env.WAQI_API_KEY || 'demo' 
+const WAQI_API_KEY = process.env.WAQI_API_KEY || 'demo'
+
+// WAQI API response types
+interface WAQISearchStation {
+  uid: string
+  aqi: number | string
+  station: {
+    name: string
+    geo: [number, number]
+  }
+}
+
+interface WAQIForecastItem {
+  day: string
+  avg: number
+  max: number
+  min: number
+} 
 
 function getAQIQuality(aqi: number): string {
   if (aqi <= 50) return 'Good'
@@ -49,7 +66,7 @@ async function getCityNameFromCoordinates(lat: number, lng: number): Promise<str
   }
 }
 
-async function searchWAQIByCity(cityName: string): Promise<any[]> {
+async function searchWAQIByCity(cityName: string): Promise<WAQISearchStation[]> {
   try {
     // Use v2 search endpoint as shown in official demo
     const url = `${WAQI_BASE_URL}/v2/search/?token=${WAQI_API_KEY}&keyword=${encodeURIComponent(cityName)}`
@@ -72,7 +89,7 @@ async function searchWAQIByCity(cityName: string): Promise<any[]> {
       console.log('✅ Found stations:', data.data.length)
 
       // Return all stations, sorted by AQI validity (numeric AQI first)
-      return data.data.sort((a: any, b: any) => {
+      return data.data.sort((a: WAQISearchStation, b: WAQISearchStation) => {
         const aValid = typeof a.aqi === 'number' ? 1 : 0
         const bValid = typeof b.aqi === 'number' ? 1 : 0
         return bValid - aValid // Sort valid AQI stations first
@@ -195,7 +212,7 @@ async function fetchWAQIData(lat: number, lng: number) {
       if (data.address?.suburb) enhancedLocations.unshift(data.address.suburb)
       if (data.address?.neighbourhood) enhancedLocations.unshift(data.address.neighbourhood)
       if (data.address?.city_district) enhancedLocations.unshift(data.address.city_district)
-    } catch (e) {
+    } catch {
       console.log('⚠️ Could not fetch detailed location names')
     }
 
@@ -358,7 +375,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Use real WAQI forecast data
-    const forecast = waqiForecast.slice(0, 7).map((item: any, i: number) => ({
+    const forecast = waqiForecast.slice(0, 7).map((item: WAQIForecastItem, i: number) => ({
       day: i + 1,
       aqi: item.avg || item.max || 0,
       quality: getAQIQuality(item.avg || item.max || 0),

@@ -75,7 +75,7 @@ export default function Home() {
                   rel="noopener noreferrer"
                   className="text-gray-200 hover:underline"
                 >
-                  NASA's POWER Project
+                  NASA&apos;s POWER Project
                 </a>
                 .
               </p>
@@ -205,7 +205,7 @@ export default function Home() {
       <footer className="py-15 border-t border-gray-800">
         <div className="max-w-7xl mx-auto px-6 text-center text-xs text-gray-600">
           <p>
-            Built using the WAQI & NASA's POWER Project observation data
+            Built using the WAQI & NASA&apos;s POWER Project observation data
           </p>
         </div>
       </footer>

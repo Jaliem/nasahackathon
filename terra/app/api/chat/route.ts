@@ -68,17 +68,18 @@ User question: ${message}`
       success: true,
       message: text,
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Chat API error:', error)
 
     // Handle specific error types
     let errorMessage = 'Internal server error'
-    if (error.message?.includes('API key')) {
+    const err = error as Error
+    if (err.message?.includes('API key')) {
       errorMessage = 'Invalid API key. Please check your GEMINI_API_KEY in .env.local'
-    } else if (error.message?.includes('quota')) {
+    } else if (err.message?.includes('quota')) {
       errorMessage = 'API quota exceeded. Please try again later.'
-    } else if (error.message) {
-      errorMessage = error.message
+    } else if (err.message) {
+      errorMessage = err.message
     }
 
     return NextResponse.json(

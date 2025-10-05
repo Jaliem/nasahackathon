@@ -81,7 +81,7 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
         }
         setMessages((prev) => [...prev, errorMessage])
       }
-    } catch (error) {
+    } catch {
       const errorMessage: Message = {
         role: 'assistant',
         content: 'Sorry, I encountered an error connecting to the server. Please try again.',

@@ -6,7 +6,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { message, locationData } = body
+    const { message, conversationHistory, locationData } = body
 
     console.log('Chat API called with message:', message)
 
@@ -29,28 +29,27 @@ export async function POST(request: NextRequest) {
 
     const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
 
-    // Build context from location data
-    const contextPrompt = locationData
-      ? `You are a helpful climate and environmental assistant analyzing data for ${locationData.name}.
+    // Build system instruction
+    const systemInstruction = locationData
+      ? `Environmental analyst for government agencies. Data for ${locationData.name}: (${locationData.lat}, ${locationData.lng}), Temp ${locationData.temperature !== null ? `${locationData.temperature}°C` : 'N/A'}, AQI ${locationData.airQuality !== null ? locationData.airQuality : 'N/A'}, Flood Risk ${locationData.floodRisk !== null ? `${locationData.floodRisk}%` : 'N/A'}. Provide brief, professional, policy-focused responses on climate/environment only.`
+      : `Environmental analyst for government agencies. Provide brief, professional responses on climate/environment policy only.`
 
-Current Location Data:
-- Location: ${locationData.name} (${locationData.lat}, ${locationData.lng})
-- Temperature: ${locationData.temperature !== null ? `${locationData.temperature}°C` : 'Not available'}
-- Air Quality Index (AQI): ${locationData.airQuality !== null ? locationData.airQuality : 'Not available'}
-- Flood Risk: ${locationData.floodRisk !== null ? `${locationData.floodRisk}%` : 'Not available'}
+    // Build conversation history for context
+    let conversationContent = systemInstruction + '\n\n'
 
-Based on this environmental data, please provide helpful, accurate, and actionable insights. Keep responses concise and focused on environmental impact, climate risks, and sustainability recommendations.
+    if (conversationHistory && conversationHistory.length > 0) {
+      for (const msg of conversationHistory) {
+        conversationContent += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n\n`
+      }
+    }
 
-User question: ${message}`
-      : `You are a helpful climate and environmental assistant. The user hasn't selected a location yet, so provide general information about climate, environment, and sustainability.
-
-User question: ${message}`
+    conversationContent += `User: ${message}`
 
     console.log('Generating content with Gemini...')
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-pro',
-      contents: contextPrompt,
+      model: 'gemini-2.5-flash',
+      contents: conversationContent,
     })
 
     console.log('Gemini response received')

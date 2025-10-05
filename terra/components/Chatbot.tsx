@@ -22,6 +22,29 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
+  // Load messages from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem('chatbot-messages')
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored)
+        setMessages(parsed.map((msg: Message) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        })))
+      } catch {
+        localStorage.removeItem('chatbot-messages')
+      }
+    }
+  }, [])
+
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    if (messages.length > 0) {
+      localStorage.setItem('chatbot-messages', JSON.stringify(messages))
+    }
+  }, [messages])
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -29,6 +52,11 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  const clearChat = () => {
+    setMessages([])
+    localStorage.removeItem('chatbot-messages')
+  }
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return
@@ -51,6 +79,7 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
         },
         body: JSON.stringify({
           message: input,
+          conversationHistory: messages,
           locationData: locationData
             ? {
                 name: locationData.name,
@@ -135,26 +164,49 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
             <p className="text-xs text-amber-100 truncate">{locationData.name}</p>
           )}
         </div>
-        <button
-          onClick={onToggle}
-          className="text-white hover:bg-amber-800 rounded p-1 transition-colors"
-          aria-label="Close chatbot"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-5 w-5"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
+        <div className="flex items-center gap-2">
+          <button
+            onClick={clearChat}
+            className="text-white hover:bg-amber-800 rounded p-1 transition-colors"
+            aria-label="Clear chat"
+            title="Clear chat"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </button>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+          </button>
+          <button
+            onClick={onToggle}
+            className="text-white hover:bg-amber-800 rounded p-1 transition-colors"
+            aria-label="Close chatbot"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Messages */}

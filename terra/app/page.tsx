@@ -1,10 +1,12 @@
 import Link from 'next/link'
 import Navigation from '@/components/Navigation'
+import { Globe } from '@/components/Globe'
 
 export default function Home() {
   return (
     <div className="flex flex-col min-h-screen bg-[#0f0f0f]">
       <Navigation />
+      <Globe/>
 
       <main className="flex-1 flex items-center justify-center px-6">
         <div className="max-w-3xl text-center">

@@ -281,7 +281,7 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
+              className="h-4 w-4 rotate-90"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"

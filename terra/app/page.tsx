@@ -279,14 +279,14 @@ export default function Home() {
             href="/dashboard"
             className="border-transparent px-8 py-3 bg-gray-100 hover:bg-[#d3d3d3] text-black transition-all duration-500 rounded-3xl hover:shadow-[0_0_30px_rgba(229,231,235,0.6)]"
           >
-            <b>Explore Insights</b>
+            <b>Explore Dashboard</b>
           </Link>
         </div>
           </div>
         </section>
       </main>
 
-      <footer className="py-15 border-t border-gray-800">
+      <footer className="py-4 border-t border-gray-800">
         <div className="max-w-7xl mx-auto px-6 text-center text-xs text-gray-600">
           <p>
             Built using the WAQI, NASA&apos;s POWER Project & NASA&apos;s GIBS Earth observation data

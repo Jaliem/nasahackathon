@@ -9,7 +9,7 @@
 }
 
 body {
-  background: var(--background);
+  background: #000000;
   color: var(--foreground);
   /* Use the CSS variable defined in your layout file */
   font-family: var(--font-quicksand), serif;

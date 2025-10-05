@@ -96,7 +96,7 @@ async function fetchWAQIData(lat: number, lng: number) {
 
     // Use geo-based nearest station (most efficient - single API call)
     const geoUrl = `${WAQI_BASE_URL}/feed/geo:${lat};${lng}/?token=${WAQI_API_KEY}`
-    console.log('🌍 Fetching nearest station by geo coordinates')
+    console.log('🌍 Fetching nearest station by geo coordinates from URL:', geoUrl)
 
     const geoResponse = await fetch(geoUrl, {
       headers: {
@@ -104,8 +104,16 @@ async function fetchWAQIData(lat: number, lng: number) {
       },
     })
 
+    const geoResponseText = await geoResponse.text();
+    console.log('WAQI Geo Response Status:', geoResponse.status);
+    try {
+      console.log('WAQI Geo Response Body:', JSON.parse(geoResponseText));
+    } catch {
+      console.log('WAQI Geo Response Body (not JSON):', geoResponseText);
+    }
+
     if (geoResponse.ok) {
-      const geoData = await geoResponse.json()
+      const geoData = JSON.parse(geoResponseText)
 
       if (geoData.status === 'ok' && geoData.data) {
         const aqiData = geoData.data

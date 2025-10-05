@@ -344,8 +344,18 @@ export default function MapComponent({
   const [waterGeometry, setWaterGeometry] = useState<FeatureCollection | null>(null)
 
   const fetchWaterGeometry = useCallback(async (bounds: [number, number, number, number]) => {
-    const [south, west, north, east] = bounds
-    const bbox = `${south},${west},${north},${east}`
+    console.log('🌎 Received bounds for water geometry fetch:', bounds);
+    const [south, west, north, east] = bounds;
+
+    // Add a check for the size of the bounding box
+    const area = (north - south) * (east - west);
+    if (area > 100) { // Limit to a reasonable area (e.g., 100 square degrees)
+      console.log('⚠️ Bounding box is too large for water geometry query, skipping.');
+      setWaterGeometry(null);
+      return;
+    }
+
+    const bbox = `${south},${west},${north},${east}`;
     const query = `
       [out:geojson][timeout:30];
       (
@@ -355,32 +365,32 @@ export default function MapComponent({
       out geom;
     `
       .replace(/\s+/g, ' ')
-      .trim()
+      .trim();
 
     try {
-      const response = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`)
+      const response = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
       if (!response.ok) {
-        throw new Error(`Overpass API request failed: ${response.statusText}`)
+        throw new Error(`Overpass API request failed: ${response.statusText}`);
       }
-      const data = await response.json()
+      const data = await response.json();
       if (data.features && data.features.length > 0) {
         const polygonFeatures = data.features.filter(
           (feature: Feature) =>
             feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')
-        )
+        );
         if (polygonFeatures.length > 0) {
-          setWaterGeometry({ type: 'FeatureCollection', features: polygonFeatures })
+          setWaterGeometry({ type: 'FeatureCollection', features: polygonFeatures });
         } else {
-          setWaterGeometry(null)
+          setWaterGeometry(null);
         }
       } else {
-        setWaterGeometry(null)
+        setWaterGeometry(null);
       }
     } catch (error) {
-      console.error('Failed to fetch water geometry:', error)
-      setWaterGeometry(null)
+      console.error('Failed to fetch water geometry:', error);
+      setWaterGeometry(null);
     }
-  }, [])
+  }, []);
 
   const applyRegionGeometry = useCallback((
     {

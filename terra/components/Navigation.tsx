@@ -40,21 +40,17 @@ export default function Navigation() {
   ]
 
   return (
-    // Use a slightly darker border for better contrast on black
-    <header className={`bg-black border-b border-white/20 fixed w-full top-0 z-50 transition-transform duration-300 ${visible ? 'translate-y-0' : '-translate-y-full'}`}>
-  
-      {/* Reduced vertical padding for a sleeker look */}
-      <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-        
-        {/* The logo and brand name are now a single link to the homepage */}
-        <Link href="/" className="flex items-center">
+    <header className={`bg-black fixed w-full top-0 z-[1003] transition-transform duration-300 ${visible ? 'translate-y-0' : '-translate-y-full'}`}>
+      <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2.5 group">
           <Image
             src="/Terra_logo.jpeg"
-            alt="Terra Logo"
-            width={50}
-            height={50}
+            alt="Terra"
+            width={36}
+            height={36}
+            className="rounded"
           />
-          <span className="text-xl font-semibold text-gray-100">
+          <span className="text-base font-medium text-gray-300 group-hover:text-gray-100 transition-colors">
             Terra
           </span>
         </Link>
@@ -64,13 +60,16 @@ export default function Navigation() {
             <Link
               key={link.href}
               href={link.href}
-              className={`text-sm transition-colors ${
+              className={`text-xs font-medium transition-colors relative py-1 ${
                 pathname === link.href
-                  ? 'text-gray-100 font-medium' // Make active link slightly bolder
-                  : 'text-gray-400 hover:text-gray-200'
+                  ? 'text-gray-100'
+                  : 'text-gray-500 hover:text-gray-300'
               }`}
             >
               {link.label}
+              {pathname === link.href && (
+                <span className="absolute -bottom-3 left-0 right-0 h-px bg-gray-100"></span>
+              )}
             </Link>
           ))}
         </nav>

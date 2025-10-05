@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { MapContainer, TileLayer, Popup, Marker, useMapEvents, Rectangle, GeoJSON, Circle, ZoomControl } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -202,22 +202,63 @@ const extractBoundsFromResponse = (data: unknown): [number, number, number, numb
 
 export interface RegionData {
   name: string
-  temperature: number | null
-  airQuality: number | null
-  floodRisk: number | null
-  lat: number
-  lng: number
+  temperature: number  
+  airQuality: number 
+  floodRisk: number 
+  lat: number 
+  lng: number 
 }
 
 export type OverlayType = 'none' | 'temperature' | 'air-quality' | 'flood' | 'combined'
 
-interface MapComponentProps {
+export type GIBSOverlayType = 'temperature' | 'air-quality' | 'flood'
+
+export type MapMode = 'standard' | 'gibs-overlay'
+
+const gibsOverlayLabels: Record<GIBSOverlayType, string> = {
+  temperature: 'Surface Temperature',
+  'air-quality': 'Air Quality (Aerosol Optical Depth)',
+  flood: 'Flood / Precipitation',
+}
+
+const GIBS_LAYER_CONFIG: Record<
+  GIBSOverlayType,
+  {
+    layerId: string
+    tileMatrixSet: string
+    maxNativeZoom: number
+    includeTimeDimension: boolean
+  }
+> = {
+  temperature: {
+    layerId: 'MODIS_Terra_Land_Surface_Temp_Day',
+    tileMatrixSet: 'GoogleMapsCompatible_Level7',
+    maxNativeZoom: 7,
+    includeTimeDimension: true,
+  },
+  'air-quality': {
+    layerId: 'MODIS_Combined_MAIAC_L2G_AerosolOpticalDepth',
+    tileMatrixSet: 'GoogleMapsCompatible_Level7',
+    maxNativeZoom: 7,
+    includeTimeDimension: false,
+  },
+  flood: {
+    layerId: 'IMERG_Precipitation_Rate',
+    tileMatrixSet: 'GoogleMapsCompatible_Level6',
+    maxNativeZoom: 6,
+    includeTimeDimension: true,
+  },
+}
+
+export interface MapComponentProps {
   onRegionSelect: (region: RegionData) => void
   searchResult?: { lat: number; lng: number; name: string } | null
   activeOverlay: OverlayType
+  mapMode: MapMode
+  gibsOverlay: GIBSOverlayType
   onOverlayStateChange?: (state: {
     hasGeometry: boolean
-    overlayMetrics: { temperature: number | null; airQuality: number | null; floodRisk: number | null } | null
+    overlayMetrics: { temperature: number; airQuality: number; floodRisk: number } | null
   }) => void
 }
 
@@ -277,11 +318,19 @@ function getGridColor(habitability: UrbanPlanningGrid['habitability']): string {
 }
 
 interface ApiData {
-  temperature: number | null
-  airQuality: number | null
-  floodRisk: number | null
+  temperature: number
+  airQuality: number
+  floodRisk: number
 }
 
+interface WaqiStation {
+  uid: number
+  aqi: string | number
+  station: {
+    name: string
+    geo: [number, number]
+  }
+}
 
 interface UrbanPlanningPoint {
   lat: number
@@ -316,6 +365,8 @@ export default function MapComponent({
   onRegionSelect,
   searchResult = null,
   activeOverlay,
+  mapMode,
+  gibsOverlay,
   onOverlayStateChange,
 }: MapComponentProps) {
   const customIcon = new L.Icon({
@@ -334,21 +385,34 @@ export default function MapComponent({
   const [urbanPlanningGrid, setUrbanPlanningGrid] = useState<UrbanPlanningGrid[]>([])
   const [isGeneratingGrid, setIsGeneratingGrid] = useState(false)
   const [analysisMode, setAnalysisMode] = useState<'grid' | 'region'>('region')
+  const [selectedLocation, setSelectedLocation] = useState('')
   const [regionData, setRegionData] = useState<UrbanPlanningGrid | null>(null)
+  const [isPlanningPanelCollapsed, setIsPlanningPanelCollapsed] = useState(false)
   const [selectedCountryGeometry, setSelectedCountryGeometry] = useState<Feature | FeatureCollection | null>(null)
-  const [overlayMetrics, setOverlayMetrics] = useState<{ temperature: number | null; airQuality: number | null; floodRisk: number | null } | null>(null)
+  const [overlayMetrics, setOverlayMetrics] = useState<{ temperature: number; airQuality: number; floodRisk: number } | null>(null)
   const [highlightCircle, setHighlightCircle] = useState<{ center: [number, number]; radius: number } | null>(null)
   const [waterGeometry, setWaterGeometry] = useState<FeatureCollection | null>(null)
-
+  const [gibsBounds, setGibsBounds] = useState<[number, number, number, number] | null>(null)
+  const [gibsMaskGeometry, setGibsMaskGeometry] = useState<FeatureCollection | null>(null)
+  const [lastClickedCoords, setLastClickedCoords] = useState<{ lat: number; lng: number } | null>(null)
   const fetchWaterGeometry = useCallback(async (bounds: [number, number, number, number]) => {
-    const [south, west, north, east] = bounds
+    console.log('🌎 Received bounds for water geometry fetch:', bounds);
+    const [south, west, north, east] = bounds;
+
+    // Add a check for the size of the bounding box
+    const area = (north - south) * (east - west);
+    if (area > 100) { // Limit to a reasonable area (e.g., 100 square degrees)
+      console.log('⚠️ Bounding box is too large for water geometry query, skipping.');
+      setWaterGeometry(null);
+      return;
+    }
+
+    const bbox = `${south},${west},${north},${east}`;
     const query = `
-      [out:json][timeout:30];
+      [out:geojson][timeout:30];
       (
-        way["natural"="water"](${south},${west},${north},${east});
-        way["waterway"="riverbank"](${south},${west},${north},${east});
-        relation["natural"="water"](${south},${west},${north},${east});
-        relation["waterway"="riverbank"](${south},${west},${north},${east});
+        nwr["natural"="water"](${bbox});
+        nwr["waterway"="riverbank"](${bbox});
       );
       out geom;
     `
@@ -360,53 +424,14 @@ export default function MapComponent({
       if (!response.ok) {
         throw new Error(`Overpass API request failed: ${response.statusText}`);
       }
-      const data = await response.json()
-
-      // Convert OSM JSON to GeoJSON
-      if (data.elements && data.elements.length > 0) {
-        const features: Feature[] = []
-
-        data.elements.forEach((element: Record<string, unknown>) => {
-          if (element.type === 'way' && element.geometry) {
-            // Convert way to polygon
-            const coordinates = (element.geometry as Array<{ lon: number; lat: number }>).map((node) => [node.lon, node.lat])
-            // Close the polygon if not already closed
-            if (coordinates.length > 0 &&
-                (coordinates[0][0] !== coordinates[coordinates.length - 1][0] ||
-                 coordinates[0][1] !== coordinates[coordinates.length - 1][1])) {
-              coordinates.push(coordinates[0])
-            }
-            if (coordinates.length >= 4) {
-              features.push({
-                type: 'Feature',
-                properties: element.tags || {},
-                geometry: {
-                  type: 'Polygon',
-                  coordinates: [coordinates]
-                }
-              })
-            }
-          } else if (element.type === 'relation' && element.members) {
-            // Handle multipolygon relations
-            const outerWays = (element.members as Array<{ role: string; geometry?: Array<{ lon: number; lat: number }> }>).filter((m) => m.role === 'outer' && m.geometry)
-            if (outerWays.length > 0) {
-              const polygons = outerWays.map((way) =>
-                way.geometry!.map((node) => [node.lon, node.lat])
-              )
-              features.push({
-                type: 'Feature',
-                properties: element.tags || {},
-                geometry: {
-                  type: 'MultiPolygon',
-                  coordinates: [polygons]
-                }
-              })
-            }
-          }
-        })
-
-        if (features.length > 0) {
-          setWaterGeometry({ type: 'FeatureCollection', features })
+      const data = await response.json();
+      if (data.features && data.features.length > 0) {
+        const polygonFeatures = data.features.filter(
+          (feature: Feature) =>
+            feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')
+        );
+        if (polygonFeatures.length > 0) {
+          setWaterGeometry({ type: 'FeatureCollection', features: polygonFeatures });
         } else {
           setWaterGeometry(null);
         }
@@ -418,6 +443,52 @@ export default function MapComponent({
       setWaterGeometry(null);
     }
   }, []);
+
+  const buildGibsMask = useCallback((geometry: FeatureCollection | null): FeatureCollection | null => {
+    if (!geometry || !geometry.features.length) return null
+
+    const worldOutline: number[][] = [
+      [-180, -90],
+      [180, -90],
+      [180, 90],
+      [-180, 90],
+      [-180, -90],
+    ]
+
+    const holes: number[][][] = []
+
+    for (const feature of geometry.features) {
+      if (!feature.geometry) continue
+      if (feature.geometry.type === 'Polygon') {
+        const rings = feature.geometry.coordinates
+        if (rings[0]) {
+          holes.push(rings[0])
+        }
+      } else if (feature.geometry.type === 'MultiPolygon') {
+        for (const polygon of feature.geometry.coordinates) {
+          if (polygon[0]) {
+            holes.push(polygon[0])
+          }
+        }
+      }
+    }
+
+    if (!holes.length) return null
+
+    return {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'Polygon',
+            coordinates: [worldOutline, ...holes],
+          },
+        },
+      ],
+    }
+  }, [])
 
   const applyRegionGeometry = useCallback((
     {
@@ -443,6 +514,29 @@ export default function MapComponent({
     }
     setSelectedCountryGeometry(sanitized)
 
+    if (mapMode === 'gibs-overlay') {
+      if (sanitized) {
+        try {
+          const geoLayer = L.geoJSON(sanitized as unknown as GeoJsonObject)
+          const geoBounds = geoLayer.getBounds()
+          if (geoBounds.isValid()) {
+            setGibsBounds([
+              geoBounds.getSouth(),
+              geoBounds.getWest(),
+              geoBounds.getNorth(),
+              geoBounds.getEast(),
+            ])
+          }
+        } catch (error) {
+          console.warn('Failed to compute GIBS bounds from geometry:', error)
+        }
+        setGibsMaskGeometry(buildGibsMask(sanitized))
+      } else {
+        setGibsMaskGeometry(null)
+        setGibsBounds(null)
+      }
+    }
+
     if (!sanitized || !map || !fitBounds) {
       return Boolean(sanitized)
     }
@@ -458,7 +552,7 @@ export default function MapComponent({
     }
 
     return Boolean(sanitized)
-  }, [map])
+  }, [buildGibsMask, map, mapMode])
 
   const fetchGeometryByName = useCallback(async (countryName: string | undefined, options: GeometryFetchOptions = {}): Promise<GeometryFetchResult> => {
     if (!countryName) return { success: false }
@@ -617,6 +711,7 @@ export default function MapComponent({
     if (!map) return
 
     setIsGeneratingGrid(true)
+    console.log(`Analyzing region: ${locationName}`)
     setWaterGeometry(null)
 
     try {
@@ -639,9 +734,11 @@ export default function MapComponent({
       const lng = parseFloat(location.lon)
       const boundingBox = location.boundingbox // [south, north, west, east]
 
+      console.log(`📍 Found: ${location.display_name}`, { lat, lng, boundingBox })
 
       // Fly to location
       map.flyTo([lat, lng], 12, { duration: 1.5 })
+      setLastClickedCoords({ lat, lng })
 
       setSelectedCountryGeometry(null)
 
@@ -759,6 +856,7 @@ export default function MapComponent({
         airQuality: regionAnalysis.airQuality,
         floodRisk: regionAnalysis.floodRisk,
       })
+      console.log(`Region analysis complete for ${locationName}`)
 
     } catch (error) {
       console.error('Error analyzing region:', error)
@@ -782,10 +880,12 @@ export default function MapComponent({
 
     // Prevent multiple simultaneous requests
     if (isGeneratingGrid) {
+      console.log('Already generating grid, skipping...')
       return
     }
 
     setIsGeneratingGrid(true)
+    console.log('Generating urban planning development grid...')
 
     const bounds = map.getBounds()
     const center = bounds.getCenter()
@@ -813,12 +913,15 @@ export default function MapComponent({
     const totalCells = numLatCells * numLngCells
 
     if (totalCells > maxCells) {
+      console.log(`Too many cells (${totalCells}), zoom in more or reduce area. Maximum: ${maxCells} cells`)
       setIsGeneratingGrid(false)
       return
     }
 
     // Calculate cell area in square kilometers
     const cellAreaKm2 = cellSizeKm * cellSizeKm
+
+    console.log(`Creating ${numLatCells}x${numLngCells} development grid (${totalCells} cells of ${cellSizeKm}km², ${totalCells * 3} API calls)...`)
 
     const gridCells: UrbanPlanningGrid[] = []
 
@@ -928,6 +1031,7 @@ export default function MapComponent({
         }
       }
 
+      console.log(`Generated ${gridCells.length} grid cells for development analysis`)
       setUrbanPlanningGrid(gridCells)
     } catch (error) {
       console.error('Error generating urban planning grid:', error)
@@ -948,6 +1052,7 @@ export default function MapComponent({
   // Handle search result
   const fetchApiData = useCallback(async (lat: number, lng: number): Promise<ApiData | null> => {
     setIsLoadingApi(true)
+    console.log('🗺️ Fetching API data for popup:', { lat, lng })
 
     try {
       // Fetch all three APIs in parallel
@@ -975,10 +1080,12 @@ export default function MapComponent({
         floodResponse.json(),
       ])
 
+      console.log('API data fetched for popup:', { tempData, aqData, floodData })
+
       const apiResults: ApiData = {
-        temperature: tempData.data?.currentTemp ?? null,
-        airQuality: tempData.data?.currentAQI ?? aqData.data?.currentAQI ?? null,
-        floodRisk: floodData.data?.overallRisk ?? null,
+        temperature: tempData.data?.currentTemp || 0,
+        airQuality: tempData.data?.currentAQI || aqData.data?.currentAQI || 0,
+        floodRisk: floodData.data?.overallRisk || 0,
       }
 
       setApiData(apiResults)
@@ -996,9 +1103,12 @@ export default function MapComponent({
     if (!searchResult || !map) return
 
     const run = async () => {
+      console.log('🔍 Navigating to:', searchResult.name)
       map.flyTo([searchResult.lat, searchResult.lng], 10, {
         duration: 1.5
       })
+
+      setLastClickedCoords({ lat: searchResult.lat, lng: searchResult.lng })
 
       let regionData: RegionData = {
         name: searchResult.name,
@@ -1151,22 +1261,45 @@ export default function MapComponent({
 
     switch (activeOverlay) {
       case 'temperature':
-        return overlayMetrics.temperature !== null ? temperatureSeverityColor(overlayMetrics.temperature) : null
+        return temperatureSeverityColor(overlayMetrics.temperature)
       case 'air-quality':
-        return overlayMetrics.airQuality !== null ? airQualitySeverityColor(overlayMetrics.airQuality) : null
+        return airQualitySeverityColor(overlayMetrics.airQuality)
       case 'flood':
-        return overlayMetrics.floodRisk !== null ? floodSeverityColor(overlayMetrics.floodRisk) : null
+        return floodSeverityColor(overlayMetrics.floodRisk)
       case 'combined':
-        if (overlayMetrics.temperature !== null && overlayMetrics.airQuality !== null && overlayMetrics.floodRisk !== null) {
-          return combinedRiskSeverityColor(
-            calculateUrbanRiskScore(overlayMetrics.temperature, overlayMetrics.airQuality, overlayMetrics.floodRisk)
-          )
-        }
-        return null
+        return combinedRiskSeverityColor(
+          calculateUrbanRiskScore(overlayMetrics.temperature, overlayMetrics.airQuality, overlayMetrics.floodRisk)
+        )
       default:
         return null
     }
   })()
+
+  const getGibsTileLayer = useCallback(() => {
+    if (mapMode !== 'gibs-overlay' || !gibsBounds) return null
+
+    const baseUrl = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best'
+    const layerConfig = GIBS_LAYER_CONFIG[gibsOverlay]
+    const { layerId, tileMatrixSet, maxNativeZoom, includeTimeDimension } = layerConfig
+    const boundsKey = gibsBounds ? gibsBounds.map((value) => value.toFixed(4)).join(',') : 'global'
+    const timeSegment = includeTimeDimension ? 'default/' : ''
+
+    return (
+      <TileLayer
+        key={`gibs-${gibsOverlay}-${boundsKey}`}
+        url={`${baseUrl}/${layerId}/default/${timeSegment}${tileMatrixSet}/{z}/{y}/{x}.png`}
+        attribution="NASA GIBS"
+        opacity={0.7}
+        maxZoom={Math.max(maxNativeZoom, 12)}
+        maxNativeZoom={maxNativeZoom}
+        minZoom={1}
+        bounds={gibsBounds ? L.latLngBounds(
+          [gibsBounds[0], gibsBounds[1]],
+          [gibsBounds[2], gibsBounds[3]]
+        ) : undefined}
+      />
+    )
+  }, [gibsBounds, gibsOverlay, mapMode])
 
   useEffect(() => {
     if (!onOverlayStateChange) return
@@ -1176,6 +1309,50 @@ export default function MapComponent({
       overlayMetrics,
     })
   }, [onOverlayStateChange, overlayMetrics, selectedCountryGeometry])
+
+  useEffect(() => {
+    if (mapMode !== 'gibs-overlay') {
+      setGibsMaskGeometry(null)
+      setGibsBounds(null)
+      return
+    }
+
+    const geometryCollection = sanitizeFeatureCollection(
+      (selectedCountryGeometry as Feature | FeatureCollection) || null
+    )
+
+    if (!geometryCollection) {
+      setGibsMaskGeometry(null)
+      setGibsBounds(null)
+      return
+    }
+
+    setGibsMaskGeometry(buildGibsMask(geometryCollection))
+
+    try {
+      const geoLayer = L.geoJSON(geometryCollection as unknown as GeoJsonObject)
+      const bounds = geoLayer.getBounds()
+      if (bounds.isValid()) {
+        setGibsBounds([
+          bounds.getSouth(),
+          bounds.getWest(),
+          bounds.getNorth(),
+          bounds.getEast(),
+        ])
+      }
+    } catch (error) {
+      console.warn('Unable to compute GIBS bounds from geometry:', error)
+    }
+  }, [buildGibsMask, mapMode, selectedCountryGeometry])
+
+  useEffect(() => {
+    if (!map || !lastClickedCoords) return
+    map.flyTo(
+      [lastClickedCoords.lat, lastClickedCoords.lng],
+      mapMode === 'gibs-overlay' ? Math.max(map.getZoom(), 5) : map.getZoom(),
+      { duration: 0.6 }
+    )
+  }, [lastClickedCoords, map, mapMode])
 
   if (!mounted) {
     return <div className="h-full flex items-center justify-center text-gray-400">Loading map...</div>
@@ -1192,8 +1369,15 @@ export default function MapComponent({
         </div>
       )}
 
+      {/* Map controls handled via dashboard panel */}
+
       {/* Urban Planning Controls */}
-      <div className="absolute top-4 right-4 z-[1001] bg-[#1a1a1a] border border-gray-700 rounded-lg shadow-2xl max-w-sm">
+      {mapMode === 'standard' && (
+        <div className="absolute top-4 right-4 z-[1001] bg-[#1a1a1a] border border-gray-700 rounded-lg shadow-2xl max-w-sm">
+          {/* Header with collapse button */}
+          {/* <div className="flex items-center justify-between p-4 pb-2">
+          ...
+          */}
         {/* Header with collapse button */}
         {/* <div className="flex items-center justify-between p-4 pb-2">
           <div className="text-lg font-bold text-white flex items-center gap-2">
@@ -1376,21 +1560,22 @@ export default function MapComponent({
             </div> */}
         {/* </div>
         )} */}
-      </div> 
+        </div>
+      )}
 
       <MapContainer
-        key={mapId}
-        center={[-6.2088, 106.8456]} // Jakarta, Indonesia
-        zoom={10}
-        minZoom={3}
-        maxZoom={16} // Allow over-zooming up to level 16
+        key={`${mapId}-${mapMode}`}
+        center={lastClickedCoords ? [lastClickedCoords.lat, lastClickedCoords.lng] : [-6.2088, 106.8456]}
+        zoom={mapMode === 'gibs-overlay' ? 5 : 10}
+        minZoom={mapMode === 'gibs-overlay' ? 2 : 3}
+        maxZoom={16}
         maxBounds={[
           [-90, -180],  // Southwest coordinates
           [90, 180]     // Northeast coordinates
         ]}
         maxBoundsViscosity={0.5}
         className="h-full w-full"
-        zoomControl={false}
+        zoomControl={true}
         scrollWheelZoom={true}
         ref={(mapInstance) => {
           if (mapInstance) {
@@ -1398,14 +1583,15 @@ export default function MapComponent({
           }
         }}
       >
-        <ZoomControl position="bottomright" />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          maxZoom={16} // Tiles are only available up to zoom 16
+          maxZoom={16}
         />
 
-        {selectedCountryGeometry && activeOverlay !== 'none' && (
+        {mapMode === 'gibs-overlay' && getGibsTileLayer()}
+
+        {mapMode === 'standard' && selectedCountryGeometry && activeOverlay !== 'none' && (
           <GeoJSON
             key={`${activeOverlay}-${overlayFillColor}`}
             data={selectedCountryGeometry as unknown as GeoJsonObject}
@@ -1419,7 +1605,36 @@ export default function MapComponent({
           />
         )}
 
-        {waterGeometry && (
+        {mapMode === 'gibs-overlay' && selectedCountryGeometry && (
+          <GeoJSON
+            key={`gibs-outline`}
+            data={selectedCountryGeometry as unknown as GeoJsonObject}
+            style={() => ({
+              color: '#ffffff',
+              weight: 1.5,
+              fillColor: 'transparent',
+              fillOpacity: 0,
+              opacity: 0.9,
+            })}
+          />
+        )}
+
+        {mapMode === 'gibs-overlay' && gibsOverlay && gibsMaskGeometry && (
+          <GeoJSON
+            key={`gibs-mask-${gibsOverlay}`}
+            data={gibsMaskGeometry as unknown as GeoJsonObject}
+            style={() => ({
+              color: 'transparent',
+              weight: 0,
+              opacity: 0,
+              fillColor: 'transparent',
+              fillOpacity: 0,
+              fillRule: 'evenodd' as CanvasFillRule,
+            })}
+          />
+        )}
+
+        {mapMode === 'standard' && waterGeometry && (
           <GeoJSON
             key="water-mask"
             data={waterGeometry as unknown as GeoJsonObject}
@@ -1432,7 +1647,7 @@ export default function MapComponent({
           />
         )}
 
-        {highlightCircle && activeOverlay !== 'none' && (
+        {mapMode === 'standard' && highlightCircle && activeOverlay !== 'none' && (
           <Circle
             center={highlightCircle.center}
             radius={highlightCircle.radius}
@@ -1448,8 +1663,55 @@ export default function MapComponent({
 
         <MapEventHandler onMapClick={handleMapClick} />
 
+        {mapMode === 'gibs-overlay' && gibsBounds && (
+          <Rectangle
+            bounds={[
+              [gibsBounds[0], gibsBounds[1]],
+              [gibsBounds[2], gibsBounds[3]],
+            ]}
+            pathOptions={{
+              color: '#ffffff',
+              weight: 2,
+              fillColor: 'transparent',
+              opacity: 0.9,
+              fillOpacity: 0,
+            }}
+          >
+            <Popup>
+              <div className="p-2 text-sm">
+                <div className="font-semibold">GIBS Focus Area</div>
+                <div className="text-xs text-gray-600 mt-1">
+                  Showing {gibsOverlayLabels[gibsOverlay]} overlay
+                </div>
+              </div>
+            </Popup>
+          </Rectangle>
+        )}
+
+        {mapMode === 'gibs-overlay' && !gibsMaskGeometry && highlightCircle && (
+          <Circle
+            center={highlightCircle.center}
+            radius={highlightCircle.radius}
+            pathOptions={{
+              color: '#ffffff',
+              weight: 2,
+              fillColor: 'transparent',
+              fillOpacity: 0,
+              opacity: 0.9,
+            }}
+          />
+        )}
+
+        {/* Clicked location marker */}
+        {mapMode === 'standard' && clickedLocation && (
+          <Marker
+            position={[clickedLocation.lat, clickedLocation.lng]}
+            icon={customIcon}
+          />
+        )}
+
         {/* Urban Planning Development Grid */}
-        {urbanPlanningGrid.map((cell) => (
+        {mapMode === 'standard' && urbanPlanningGrid.map((cell) => (
           <Rectangle
             key={cell.id}
             bounds={cell.bounds}
@@ -1463,22 +1725,22 @@ export default function MapComponent({
           >
             <Popup>
               <div className="p-4 min-w-[320px] max-w-[400px]">
-                <h3 className="font-bold text-lg mb-3 border-b pb-2 text-gray-800 flex items-center gap-2">
-                  🏗️ {cell.name}
-                  <span className={`px-2 py-1 rounded text-xs font-bold ${
+                <div className="mb-4 pb-3 border-b border-gray-200">
+                  <h3 className="font-semibold text-lg text-gray-900 mb-1">{cell.name}</h3>
+                  <span className={`inline-block px-2.5 py-1 rounded-md text-xs font-semibold ${
                     cell.habitability === 'excellent' ? 'bg-green-100 text-green-800' :
-                    cell.habitability === 'good' ? 'bg-green-50 text-green-700' :
+                    cell.habitability === 'good' ? 'bg-green-50 text-green-700 border border-green-200' :
                     cell.habitability === 'moderate' ? 'bg-yellow-100 text-yellow-800' :
                     cell.habitability === 'poor' ? 'bg-orange-100 text-orange-800' :
                     'bg-red-100 text-red-800'
                   }`}>
-                    {cell.habitability.toUpperCase()}
+                    {cell.habitability.charAt(0).toUpperCase() + cell.habitability.slice(1)} Suitability
                   </span>
-                </h3>
+                </div>
 
                 {/* Development Suitability Assessment */}
-                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-3 rounded-lg mb-4 border border-blue-200">
-                  <h4 className="font-bold text-blue-800 mb-2 text-sm">🎯 Development Suitability Analysis</h4>
+                <div className="bg-gray-50 p-3 rounded-lg mb-4 border border-gray-200">
+                  <h4 className="font-semibold text-gray-800 mb-3 text-sm">Suitability Analysis</h4>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div className="bg-white p-2 rounded border">
                       <div className="text-xs text-gray-600 mb-1">Urban Risk Score</div>
@@ -1501,31 +1763,31 @@ export default function MapComponent({
 
                 {/* NASA Climate Data */}
                 <div className="space-y-3 mb-4">
-                  <h4 className="font-bold text-gray-700 text-sm border-b pb-1">🛰️ NASA Earth Observation Data</h4>
+                  <h4 className="font-semibold text-gray-800 text-sm border-b border-gray-200 pb-2">Environmental Metrics</h4>
                   <div className="grid grid-cols-3 gap-2">
-                    <div className="bg-blue-50 p-2 rounded border">
-                      <div className="text-xs text-blue-600 mb-1">🌡️ Temperature</div>
-                      <div className="text-sm font-bold text-blue-800">{cell.temperature}°C</div>
-                      <div className="text-xs text-gray-500">
-                        {cell.temperature > 35 ? 'Very Hot' : 
-                         cell.temperature > 30 ? 'Hot' : 
-                         cell.temperature > 25 ? 'Warm' : 
+                    <div className="bg-white p-2.5 rounded-lg border border-gray-200">
+                      <div className="text-xs text-gray-600 mb-1 font-medium">Temperature</div>
+                      <div className="text-base font-semibold text-gray-900">{cell.temperature}°C</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {cell.temperature > 35 ? 'Very Hot' :
+                         cell.temperature > 30 ? 'Hot' :
+                         cell.temperature > 25 ? 'Warm' :
                          cell.temperature > 20 ? 'Mild' : 'Cool'}
                       </div>
                     </div>
-                    <div className="bg-purple-50 p-2 rounded border">
-                      <div className="text-xs text-purple-600 mb-1">💨 Air Quality</div>
-                      <div className="text-sm font-bold text-purple-800">AQI {cell.airQuality}</div>
-                      <div className="text-xs text-gray-500">
+                    <div className="bg-white p-2.5 rounded-lg border border-gray-200">
+                      <div className="text-xs text-gray-600 mb-1 font-medium">Air Quality</div>
+                      <div className="text-base font-semibold text-gray-900">AQI {cell.airQuality}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
                         {cell.airQuality <= 50 ? 'Good' :
                          cell.airQuality <= 100 ? 'Moderate' :
                          cell.airQuality <= 150 ? 'Unhealthy' : 'Hazardous'}
                       </div>
                     </div>
-                    <div className="bg-cyan-50 p-2 rounded border">
-                      <div className="text-xs text-cyan-600 mb-1">🌊 Flood Risk</div>
-                      <div className="text-sm font-bold text-cyan-800">{cell.floodRisk}%</div>
-                      <div className="text-xs text-gray-500">
+                    <div className="bg-white p-2.5 rounded-lg border border-gray-200">
+                      <div className="text-xs text-gray-600 mb-1 font-medium">Flood Risk</div>
+                      <div className="text-base font-semibold text-gray-900">{cell.floodRisk}%</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
                         {cell.floodRisk <= 30 ? 'Low' :
                          cell.floodRisk <= 60 ? 'Moderate' : 'High'}
                       </div>
@@ -1534,14 +1796,14 @@ export default function MapComponent({
                 </div>
 
                 {/* Urban Planning Recommendations */}
-                <div className="border-t pt-3">
-                  <h4 className="font-bold text-gray-700 mb-2 text-sm flex items-center gap-1">
-                    📋 Development Recommendations for Grid Cell
+                <div className="border-t border-gray-200 pt-4">
+                  <h4 className="font-semibold text-gray-800 mb-3 text-sm">
+                    Development Recommendations
                   </h4>
                   <div className="space-y-2 text-sm">
                     {cell.habitability === 'excellent' && (
-                      <div className="bg-green-50 p-3 rounded border border-green-200">
-                        <div className="font-semibold text-green-800 mb-2">✅ RECOMMENDED FOR MAJOR DEVELOPMENT</div>
+                      <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                        <div className="font-semibold text-green-800 mb-2">Recommended for Major Development</div>
                         <ul className="text-green-700 space-y-1 text-xs">
                           <li>• High-density residential developments</li>
                           <li>• Commercial and business districts</li>
@@ -1551,8 +1813,8 @@ export default function MapComponent({
                       </div>
                     )}
                     {cell.habitability === 'good' && (
-                      <div className="bg-green-50 p-3 rounded border border-green-200">
-                        <div className="font-semibold text-green-700 mb-2">SUITABLE FOR DEVELOPMENT</div>
+                      <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                        <div className="font-semibold text-green-700 mb-2">Suitable for Development</div>
                         <ul className="text-green-600 space-y-1 text-xs">
                           <li>• Medium-density mixed-use development</li>
                           <li>• Standard infrastructure requirements</li>
@@ -1562,8 +1824,8 @@ export default function MapComponent({
                       </div>
                     )}
                     {cell.habitability === 'moderate' && (
-                      <div className="bg-yellow-50 p-3 rounded border border-yellow-200">
-                        <div className="font-semibold text-yellow-800 mb-2">CONDITIONAL DEVELOPMENT</div>
+                      <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+                        <div className="font-semibold text-yellow-800 mb-2">Conditional Development</div>
                         <ul className="text-yellow-700 space-y-1 text-xs">
                           <li>• Low-density development only</li>
                           <li>• Enhanced climate-resilient infrastructure</li>
@@ -1573,8 +1835,8 @@ export default function MapComponent({
                       </div>
                     )}
                     {cell.habitability === 'poor' && (
-                      <div className="bg-orange-50 p-3 rounded border border-orange-200">
-                        <div className="font-semibold text-orange-800 mb-2">⚠️ HIGH-RISK DEVELOPMENT AREA</div>
+                      <div className="bg-orange-50 p-3 rounded-lg border border-orange-200">
+                        <div className="font-semibold text-orange-800 mb-2">High-Risk Development Area</div>
                         <ul className="text-orange-700 space-y-1 text-xs">
                           <li>• Avoid residential development</li>
                           <li>• Industrial use only with extensive precautions</li>
@@ -1584,8 +1846,8 @@ export default function MapComponent({
                       </div>
                     )}
                     {cell.habitability === 'critical' && (
-                      <div className="bg-red-50 p-3 rounded border border-red-200">
-                        <div className="font-semibold text-red-800 mb-2">NOT RECOMMENDED FOR DEVELOPMENT</div>
+                      <div className="bg-red-50 p-3 rounded-lg border border-red-200">
+                        <div className="font-semibold text-red-800 mb-2">Not Recommended for Development</div>
                         <ul className="text-red-700 space-y-1 text-xs">
                           <li>• Severe environmental and climate risks</li>
                           <li>• Designate as conservation or protection area</li>
@@ -1597,17 +1859,15 @@ export default function MapComponent({
                   </div>
                 </div>
 
-                <div className="border-t pt-2 mt-3 text-xs text-gray-500 italic text-center">
-                  Grid Position: Row {cell.gridRow + 1}, Column {cell.gridCol + 1}<br />
-                  Data: NASA GIBS • POWER • Real-time satellite observations
+                <div className="border-t border-gray-200 pt-3 mt-4 text-xs text-gray-500 text-center">
+                  <div className="font-mono">Grid: Row {cell.gridRow + 1}, Col {cell.gridCol + 1}</div>
+                  <div className="mt-1">NASA Earth Observation Data</div>
                 </div>
               </div>
             </Popup>
           </Rectangle>
         ))}
-    
       </MapContainer>
     </div>
   )
 }
-

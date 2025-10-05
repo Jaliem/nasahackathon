@@ -133,8 +133,8 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
     return (
       <button
         onClick={onToggle}
-        className="fixed bottom-6 right-6 z-[1001] bg-amber-600 hover:bg-amber-700 text-white rounded-full p-4 shadow-lg transition-all"
-        aria-label="Open chatbot"
+        className="fixed bottom-6 right-6 z-[1001] bg-[#1a1a1a] hover:bg-[#202020] text-gray-300 border border-gray-800 rounded-full p-3.5 transition-colors"
+        aria-label="Open assistant"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -155,21 +155,21 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-[1001] w-96 h-[600px] bg-[#1a1a1a] rounded-lg shadow-2xl flex flex-col border border-gray-800">
+    <div className="fixed bottom-6 right-6 z-[1001] w-96 h-[600px] bg-[#0f0f0f] rounded-lg shadow-2xl flex flex-col border border-gray-800 overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-amber-600 to-amber-700 text-white p-4 rounded-t-lg flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold">Climate Assistant</h3>
+      <div className="bg-[#1a1a1a] border-b border-gray-800 text-white p-4 flex items-center justify-between">
+        <div className="flex-1 min-w-0">
+          <h3 className="font-medium text-sm text-gray-100">TerraBot</h3>
           {locationData && (
-            <p className="text-xs text-amber-100 truncate">{locationData.name}</p>
+            <p className="text-xs text-gray-400 truncate mt-1">{locationData.name}</p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 ml-2">
           <button
             onClick={clearChat}
-            className="text-white hover:bg-amber-800 rounded p-1 transition-colors"
-            aria-label="Clear chat"
-            title="Clear chat"
+            className="text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded p-1.5 transition-colors"
+            aria-label="Clear conversation"
+            title="Clear conversation"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -188,8 +188,8 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
           </button>
           <button
             onClick={onToggle}
-            className="text-white hover:bg-amber-800 rounded p-1 transition-colors"
-            aria-label="Close chatbot"
+            className="text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded p-1.5 transition-colors"
+            aria-label="Close assistant"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -210,13 +210,13 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#222]">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#0a0a0a] scrollbar-thin scrollbar-track-gray-900 scrollbar-thumb-gray-700 hover:scrollbar-thumb-gray-600">
         {messages.length === 0 && (
-          <div className="text-center text-gray-400 mt-8">
-            <p className="text-sm">
+          <div className="text-center text-gray-500 mt-12 px-4">
+            <p className="text-xs leading-relaxed">
               {locationData
-                ? `Ask me anything about ${locationData.name}'s climate and environmental data!`
-                : 'Click on the map to select a location, then ask me about climate and environmental data!'}
+                ? `Ask questions about ${locationData.name}'s environmental conditions and urban planning considerations.`
+                : 'Select a location on the map to begin analyzing climate and environmental data.'}
             </p>
           </div>
         )}
@@ -226,20 +226,20 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
             className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[80%] rounded-lg p-3 ${
+              className={`max-w-[85%] rounded p-2.5 ${
                 message.role === 'user'
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-[#2a2a2a] text-gray-100 border border-gray-700'
+                  ? 'bg-[#1a1a1a] text-gray-100'
+                  : 'bg-[#141414] text-gray-300 border border-gray-800'
               }`}
             >
               {message.role === 'user' ? (
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                <p className="text-xs whitespace-pre-wrap leading-relaxed">{message.content}</p>
               ) : (
-                <div className="text-sm prose prose-sm prose-invert max-w-none prose-headings:text-gray-100 prose-headings:mt-2 prose-headings:mb-1 prose-p:my-1 prose-p:text-gray-200 prose-ul:my-1 prose-li:my-0 prose-li:text-gray-200 prose-strong:text-amber-400">
+                <div className="text-xs prose prose-sm prose-invert max-w-none prose-headings:text-gray-100 prose-headings:mt-2 prose-headings:mb-1 prose-p:my-1 prose-p:text-gray-300 prose-ul:my-1 prose-li:my-0 prose-li:text-gray-300 prose-strong:text-gray-100 prose-strong:font-medium">
                   <ReactMarkdown>{message.content}</ReactMarkdown>
                 </div>
               )}
-              <p className="text-xs mt-1 opacity-70">
+              <p className={`text-[10px] mt-1.5 ${message.role === 'user' ? 'text-gray-500' : 'text-gray-600'}`}>
                 {message.timestamp.toLocaleTimeString([], {
                   hour: '2-digit',
                   minute: '2-digit',
@@ -250,11 +250,11 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
         ))}
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-[#2a2a2a] border border-gray-700 rounded-lg p-3">
-              <div className="flex space-x-2">
-                <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce"></div>
-                <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce delay-100"></div>
-                <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce delay-200"></div>
+            <div className="bg-[#141414] border border-gray-800 rounded p-2.5">
+              <div className="flex space-x-1.5">
+                <div className="w-1.5 h-1.5 bg-gray-600 rounded-full animate-bounce"></div>
+                <div className="w-1.5 h-1.5 bg-gray-600 rounded-full animate-bounce delay-100"></div>
+                <div className="w-1.5 h-1.5 bg-gray-600 rounded-full animate-bounce delay-200"></div>
               </div>
             </div>
           </div>
@@ -263,21 +263,21 @@ export function Chatbot({ locationData, isOpen, onToggle }: ChatbotProps) {
       </div>
 
       {/* Input */}
-      <div className="p-4 border-t border-gray-800 bg-[#1a1a1a]">
+      <div className="p-3 border-t border-gray-800 bg-[#0f0f0f]">
         <div className="flex space-x-2">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder="Ask about climate data..."
-            className="flex-1 bg-[#2a2a2a] border border-gray-700 text-gray-100 placeholder-gray-500 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm"
+            placeholder="Ask a question..."
+            className="flex-1 bg-[#1a1a1a] border border-gray-800 text-gray-100 placeholder-gray-600 rounded px-3 py-2 focus:outline-none focus:border-gray-700 text-xs transition-colors"
             disabled={isLoading}
           />
           <button
             onClick={handleSend}
             disabled={isLoading || !input.trim()}
-            className="bg-amber-600 hover:bg-amber-700 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg px-4 py-2 transition-colors"
+            className="bg-[#1a1a1a] hover:bg-[#202020] disabled:bg-[#141414] disabled:text-gray-600 text-gray-300 border border-gray-800 rounded px-3 py-2 transition-colors text-xs"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"

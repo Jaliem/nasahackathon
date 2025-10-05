@@ -3,9 +3,37 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import Image from 'next/image'
+import { useState, useEffect, useCallback } from 'react'
 
 export default function Navigation() {
   const pathname = usePathname()
+  const [visible, setVisible] = useState(true)
+  const [lastScrollY, setLastScrollY] = useState(0)
+
+  const controlNavbar = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      if (window.scrollY > lastScrollY && window.scrollY > 50) { // if scroll down hide the navbar
+        setVisible(false)
+      } else { // if scroll up show the navbar
+        setVisible(true)
+      }
+
+      // remember current page location to use in the next move
+      setLastScrollY(window.scrollY)
+    }
+  }, [lastScrollY])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.addEventListener('scroll', controlNavbar)
+
+      // cleanup function
+      return () => {
+        window.removeEventListener('scroll', controlNavbar)
+      }
+    }
+  }, [lastScrollY, controlNavbar])
+
 
   const links = [
     { href: '/dashboard', label: 'Dashboard' },
@@ -13,7 +41,7 @@ export default function Navigation() {
 
   return (
     // Use a slightly darker border for better contrast on black
-    <header className="bg-black border-b border-white/20">
+    <header className={`bg-black border-b border-white/20 fixed w-full top-0 z-50 transition-transform duration-300 ${visible ? 'translate-y-0' : '-translate-y-full'}`}>
   
       {/* Reduced vertical padding for a sleeker look */}
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">

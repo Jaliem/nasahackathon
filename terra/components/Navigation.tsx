@@ -2,22 +2,33 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import Image from 'next/image'
 
 export default function Navigation() {
   const pathname = usePathname()
 
   const links = [
-    { href: '/', label: 'Home' },
     { href: '/dashboard', label: 'Dashboard' },
-    { href: '/insights', label: 'Insights' },
-    { href: '/about', label: 'About' },
   ]
 
   return (
-    <header className="bg-[#1a1a1a] border-b border-gray-800">
+    // Use a slightly darker border for better contrast on black
+    <header className="bg-black border-b border-white/20">
+  
+      {/* Reduced vertical padding for a sleeker look */}
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-        <Link href="/" className="text-xl font-semibold text-gray-100">
-          Terra
+        
+        {/* The logo and brand name are now a single link to the homepage */}
+        <Link href="/" className="flex items-center">
+          <Image
+            src="/Terra_logo.jpeg"
+            alt="Terra Logo"
+            width={50}
+            height={50}
+          />
+          <span className="text-xl font-semibold text-gray-100">
+            Terra
+          </span>
         </Link>
 
         <nav className="flex gap-6">
@@ -27,8 +38,8 @@ export default function Navigation() {
               href={link.href}
               className={`text-sm transition-colors ${
                 pathname === link.href
-                  ? 'text-gray-100'
-                  : 'text-gray-500 hover:text-gray-300'
+                  ? 'text-gray-100 font-medium' // Make active link slightly bolder
+                  : 'text-gray-400 hover:text-gray-200'
               }`}
             >
               {link.label}

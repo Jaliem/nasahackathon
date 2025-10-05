@@ -3,6 +3,7 @@
 import { useCallback, useState, useRef, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import Navigation from '@/components/Navigation'
+import { Chatbot } from '@/components/Chatbot'
 import type { OverlayType, RegionData } from '@/components/MapComponent'
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), {
@@ -68,7 +69,9 @@ function DataCard({ title, value, risk, overlayType, activeOverlay, onSelectOver
 
 
 
-function getRiskLevel(value: number, type: string): 'low' | 'moderate' | 'high' {
+function getRiskLevel(value: number | null, type: string): 'low' | 'moderate' | 'high' {
+  if (value === null) return 'moderate'
+
   if (type === 'temperature') {
     if (value < 20) return 'low'
     if (value < 30) return 'moderate'
@@ -214,7 +217,7 @@ function Legend() {
 
 type OverlayState = {
   hasGeometry: boolean
-  overlayMetrics: { temperature: number; airQuality: number; floodRisk: number } | null
+  overlayMetrics: { temperature: number | null; airQuality: number | null; floodRisk: number | null } | null
 }
 
 export default function Dashboard() {
@@ -224,6 +227,7 @@ export default function Dashboard() {
   const [searchResult, setSearchResult] = useState<{ lat: number; lng: number; name: string } | null>(null)
   const [activeOverlay, setActiveOverlay] = useState<OverlayType>('temperature')
   const [overlayState, setOverlayState] = useState<OverlayState>({ hasGeometry: false, overlayMetrics: null })
+  const [isChatbotOpen, setIsChatbotOpen] = useState(false)
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -318,8 +322,8 @@ export default function Dashboard() {
 
                 <DataCard
                   title="Temperature"
-                  value={`${selectedRegion.temperature}°C`}
-                  risk={getRiskLevel(selectedRegion.temperature, 'temperature')}
+                  value={selectedRegion.temperature !== null && selectedRegion.temperature !== undefined ? `${selectedRegion.temperature}°C` : 'Not Found'}
+                  risk={getRiskLevel(selectedRegion.temperature ?? null, 'temperature')}
                   overlayType="temperature"
                   activeOverlay={activeOverlay}
                   onSelectOverlay={handleOverlayToggle}
@@ -327,8 +331,8 @@ export default function Dashboard() {
 
                 <DataCard
                   title="Air Quality Index"
-                  value={selectedRegion.airQuality.toString()}
-                  risk={getRiskLevel(selectedRegion.airQuality, 'airQuality')}
+                  value={selectedRegion.airQuality !== null && selectedRegion.airQuality !== undefined ? String(selectedRegion.airQuality) : 'Not Found'}
+                  risk={getRiskLevel(selectedRegion.airQuality ?? null, 'airQuality')}
                   overlayType="air-quality"
                   activeOverlay={activeOverlay}
                   onSelectOverlay={handleOverlayToggle}
@@ -336,17 +340,12 @@ export default function Dashboard() {
 
                 <DataCard
                   title="Flood Risk"
-                  value={`${selectedRegion.floodRisk}%`}
-                  risk={getRiskLevel(selectedRegion.floodRisk, 'floodRisk')}
+                  value={selectedRegion.floodRisk !== null && selectedRegion.floodRisk !== undefined ? `${selectedRegion.floodRisk}%` : 'Not Found'}
+                  risk={getRiskLevel(selectedRegion.floodRisk ?? null, 'floodRisk')}
                   overlayType="flood"
                   activeOverlay={activeOverlay}
                   onSelectOverlay={handleOverlayToggle}
                 />
-
-                
-                 
-
-
               </div>
             ) : (
               <div className="text-center text-gray-500 mt-20">
@@ -359,6 +358,13 @@ export default function Dashboard() {
           
         </aside>
       </div>
+
+      {/* Chatbot */}
+      <Chatbot
+        locationData={selectedRegion}
+        isOpen={isChatbotOpen}
+        onToggle={() => setIsChatbotOpen(!isChatbotOpen)}
+      />
     </div>
   )
 }

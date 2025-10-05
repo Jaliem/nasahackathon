@@ -67,7 +67,14 @@ const getFeatureCountryName = (feature?: Feature): string | undefined => {
   if (!feature || !feature.properties) return undefined
   const props = feature.properties as Record<string, unknown>
   const address = props.address as Record<string, unknown> | undefined
+  // Prioritize city-level names over country
   return (
+    (address?.city as string | undefined) ||
+    (address?.town as string | undefined) ||
+    (address?.village as string | undefined) ||
+    (address?.municipality as string | undefined) ||
+    (address?.county as string | undefined) ||
+    (address?.state as string | undefined) ||
     (address?.country as string | undefined) ||
     (props.display_name as string | undefined) ||
     (props.name as string | undefined)
@@ -195,11 +202,11 @@ const extractBoundsFromResponse = (data: unknown): [number, number, number, numb
 
 export interface RegionData {
   name: string
-  temperature: number  
-  airQuality: number 
-  floodRisk: number 
-  lat: number 
-  lng: number 
+  temperature: number | null
+  airQuality: number | null
+  floodRisk: number | null
+  lat: number
+  lng: number
 }
 
 export type OverlayType = 'none' | 'temperature' | 'air-quality' | 'flood' | 'combined'
@@ -210,7 +217,7 @@ interface MapComponentProps {
   activeOverlay: OverlayType
   onOverlayStateChange?: (state: {
     hasGeometry: boolean
-    overlayMetrics: { temperature: number; airQuality: number; floodRisk: number } | null
+    overlayMetrics: { temperature: number | null; airQuality: number | null; floodRisk: number | null } | null
   }) => void
 }
 
@@ -270,19 +277,11 @@ function getGridColor(habitability: UrbanPlanningGrid['habitability']): string {
 }
 
 interface ApiData {
-  temperature: number
-  airQuality: number
-  floodRisk: number
+  temperature: number | null
+  airQuality: number | null
+  floodRisk: number | null
 }
 
-interface WaqiStation {
-  uid: number
-  aqi: string | number
-  station: {
-    name: string
-    geo: [number, number]
-  }
-}
 
 interface UrbanPlanningPoint {
   lat: number
@@ -335,32 +334,21 @@ export default function MapComponent({
   const [urbanPlanningGrid, setUrbanPlanningGrid] = useState<UrbanPlanningGrid[]>([])
   const [isGeneratingGrid, setIsGeneratingGrid] = useState(false)
   const [analysisMode, setAnalysisMode] = useState<'grid' | 'region'>('region')
-  const [selectedLocation, setSelectedLocation] = useState('')
   const [regionData, setRegionData] = useState<UrbanPlanningGrid | null>(null)
-  const [isPlanningPanelCollapsed, setIsPlanningPanelCollapsed] = useState(false)
   const [selectedCountryGeometry, setSelectedCountryGeometry] = useState<Feature | FeatureCollection | null>(null)
-  const [overlayMetrics, setOverlayMetrics] = useState<{ temperature: number; airQuality: number; floodRisk: number } | null>(null)
+  const [overlayMetrics, setOverlayMetrics] = useState<{ temperature: number | null; airQuality: number | null; floodRisk: number | null } | null>(null)
   const [highlightCircle, setHighlightCircle] = useState<{ center: [number, number]; radius: number } | null>(null)
   const [waterGeometry, setWaterGeometry] = useState<FeatureCollection | null>(null)
 
   const fetchWaterGeometry = useCallback(async (bounds: [number, number, number, number]) => {
-    console.log('🌎 Received bounds for water geometry fetch:', bounds);
-    const [south, west, north, east] = bounds;
-
-    // Add a check for the size of the bounding box
-    const area = (north - south) * (east - west);
-    if (area > 100) { // Limit to a reasonable area (e.g., 100 square degrees)
-      console.log('⚠️ Bounding box is too large for water geometry query, skipping.');
-      setWaterGeometry(null);
-      return;
-    }
-
-    const bbox = `${south},${west},${north},${east}`;
+    const [south, west, north, east] = bounds
     const query = `
-      [out:geojson][timeout:30];
+      [out:json][timeout:30];
       (
-        nwr["natural"="water"](${bbox});
-        nwr["waterway"="riverbank"](${bbox});
+        way["natural"="water"](${south},${west},${north},${east});
+        way["waterway"="riverbank"](${south},${west},${north},${east});
+        relation["natural"="water"](${south},${west},${north},${east});
+        relation["waterway"="riverbank"](${south},${west},${north},${east});
       );
       out geom;
     `
@@ -372,14 +360,53 @@ export default function MapComponent({
       if (!response.ok) {
         throw new Error(`Overpass API request failed: ${response.statusText}`);
       }
-      const data = await response.json();
-      if (data.features && data.features.length > 0) {
-        const polygonFeatures = data.features.filter(
-          (feature: Feature) =>
-            feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')
-        );
-        if (polygonFeatures.length > 0) {
-          setWaterGeometry({ type: 'FeatureCollection', features: polygonFeatures });
+      const data = await response.json()
+
+      // Convert OSM JSON to GeoJSON
+      if (data.elements && data.elements.length > 0) {
+        const features: Feature[] = []
+
+        data.elements.forEach((element: any) => {
+          if (element.type === 'way' && element.geometry) {
+            // Convert way to polygon
+            const coordinates = element.geometry.map((node: any) => [node.lon, node.lat])
+            // Close the polygon if not already closed
+            if (coordinates.length > 0 &&
+                (coordinates[0][0] !== coordinates[coordinates.length - 1][0] ||
+                 coordinates[0][1] !== coordinates[coordinates.length - 1][1])) {
+              coordinates.push(coordinates[0])
+            }
+            if (coordinates.length >= 4) {
+              features.push({
+                type: 'Feature',
+                properties: element.tags || {},
+                geometry: {
+                  type: 'Polygon',
+                  coordinates: [coordinates]
+                }
+              })
+            }
+          } else if (element.type === 'relation' && element.members) {
+            // Handle multipolygon relations
+            const outerWays = element.members.filter((m: any) => m.role === 'outer' && m.geometry)
+            if (outerWays.length > 0) {
+              const polygons = outerWays.map((way: any) =>
+                way.geometry.map((node: any) => [node.lon, node.lat])
+              )
+              features.push({
+                type: 'Feature',
+                properties: element.tags || {},
+                geometry: {
+                  type: 'MultiPolygon',
+                  coordinates: [polygons]
+                }
+              })
+            }
+          }
+        })
+
+        if (features.length > 0) {
+          setWaterGeometry({ type: 'FeatureCollection', features })
         } else {
           setWaterGeometry(null);
         }
@@ -590,7 +617,6 @@ export default function MapComponent({
     if (!map) return
 
     setIsGeneratingGrid(true)
-    console.log(`Analyzing region: ${locationName}`)
     setWaterGeometry(null)
 
     try {
@@ -613,7 +639,6 @@ export default function MapComponent({
       const lng = parseFloat(location.lon)
       const boundingBox = location.boundingbox // [south, north, west, east]
 
-      console.log(`📍 Found: ${location.display_name}`, { lat, lng, boundingBox })
 
       // Fly to location
       map.flyTo([lat, lng], 12, { duration: 1.5 })
@@ -734,7 +759,6 @@ export default function MapComponent({
         airQuality: regionAnalysis.airQuality,
         floodRisk: regionAnalysis.floodRisk,
       })
-      console.log(`Region analysis complete for ${locationName}`)
 
     } catch (error) {
       console.error('Error analyzing region:', error)
@@ -758,12 +782,10 @@ export default function MapComponent({
 
     // Prevent multiple simultaneous requests
     if (isGeneratingGrid) {
-      console.log('Already generating grid, skipping...')
       return
     }
 
     setIsGeneratingGrid(true)
-    console.log('Generating urban planning development grid...')
 
     const bounds = map.getBounds()
     const center = bounds.getCenter()
@@ -791,15 +813,12 @@ export default function MapComponent({
     const totalCells = numLatCells * numLngCells
 
     if (totalCells > maxCells) {
-      console.log(`Too many cells (${totalCells}), zoom in more or reduce area. Maximum: ${maxCells} cells`)
       setIsGeneratingGrid(false)
       return
     }
 
     // Calculate cell area in square kilometers
     const cellAreaKm2 = cellSizeKm * cellSizeKm
-
-    console.log(`Creating ${numLatCells}x${numLngCells} development grid (${totalCells} cells of ${cellSizeKm}km², ${totalCells * 3} API calls)...`)
 
     const gridCells: UrbanPlanningGrid[] = []
 
@@ -909,7 +928,6 @@ export default function MapComponent({
         }
       }
 
-      console.log(`Generated ${gridCells.length} grid cells for development analysis`)
       setUrbanPlanningGrid(gridCells)
     } catch (error) {
       console.error('Error generating urban planning grid:', error)
@@ -930,7 +948,6 @@ export default function MapComponent({
   // Handle search result
   const fetchApiData = useCallback(async (lat: number, lng: number): Promise<ApiData | null> => {
     setIsLoadingApi(true)
-    console.log('🗺️ Fetching API data for popup:', { lat, lng })
 
     try {
       // Fetch all three APIs in parallel
@@ -958,12 +975,10 @@ export default function MapComponent({
         floodResponse.json(),
       ])
 
-      console.log('API data fetched for popup:', { tempData, aqData, floodData })
-
       const apiResults: ApiData = {
-        temperature: tempData.data?.currentTemp || 0,
-        airQuality: tempData.data?.currentAQI || aqData.data?.currentAQI || 0,
-        floodRisk: floodData.data?.overallRisk || 0,
+        temperature: tempData.data?.currentTemp ?? null,
+        airQuality: tempData.data?.currentAQI ?? aqData.data?.currentAQI ?? null,
+        floodRisk: floodData.data?.overallRisk ?? null,
       }
 
       setApiData(apiResults)
@@ -981,7 +996,6 @@ export default function MapComponent({
     if (!searchResult || !map) return
 
     const run = async () => {
-      console.log('🔍 Navigating to:', searchResult.name)
       map.flyTo([searchResult.lat, searchResult.lng], 10, {
         duration: 1.5
       })
@@ -1137,15 +1151,18 @@ export default function MapComponent({
 
     switch (activeOverlay) {
       case 'temperature':
-        return temperatureSeverityColor(overlayMetrics.temperature)
+        return overlayMetrics.temperature !== null ? temperatureSeverityColor(overlayMetrics.temperature) : null
       case 'air-quality':
-        return airQualitySeverityColor(overlayMetrics.airQuality)
+        return overlayMetrics.airQuality !== null ? airQualitySeverityColor(overlayMetrics.airQuality) : null
       case 'flood':
-        return floodSeverityColor(overlayMetrics.floodRisk)
+        return overlayMetrics.floodRisk !== null ? floodSeverityColor(overlayMetrics.floodRisk) : null
       case 'combined':
-        return combinedRiskSeverityColor(
-          calculateUrbanRiskScore(overlayMetrics.temperature, overlayMetrics.airQuality, overlayMetrics.floodRisk)
-        )
+        if (overlayMetrics.temperature !== null && overlayMetrics.airQuality !== null && overlayMetrics.floodRisk !== null) {
+          return combinedRiskSeverityColor(
+            calculateUrbanRiskScore(overlayMetrics.temperature, overlayMetrics.airQuality, overlayMetrics.floodRisk)
+          )
+        }
+        return null
       default:
         return null
     }
@@ -1620,7 +1637,7 @@ export default function MapComponent({
                         Temperature:
                       </span>
                       <span className="text-sm font-medium text-gray-900">
-                        {apiData.temperature !== undefined ? `${apiData.temperature}°C` : 'N/A'}
+                        {apiData.temperature !== null && apiData.temperature !== undefined ? `${apiData.temperature}°C` : 'Not Found'}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
@@ -1628,7 +1645,7 @@ export default function MapComponent({
                         Air Quality:
                       </span>
                       <span className="text-sm font-medium text-gray-900">
-                        {apiData.airQuality !== undefined ? `AQI ${apiData.airQuality}` : 'N/A'}
+                        {apiData.airQuality !== null && apiData.airQuality !== undefined ? `AQI ${apiData.airQuality}` : 'Not Found'}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
@@ -1636,7 +1653,7 @@ export default function MapComponent({
                         Flood Risk:
                       </span>
                       <span className="text-sm font-medium text-gray-900">
-                        {apiData.floodRisk !== undefined ? `${apiData.floodRisk}%` : 'N/A'}
+                        {apiData.floodRisk !== null && apiData.floodRisk !== undefined ? `${apiData.floodRisk}%` : 'Not Found'}
                       </span>
                     </div>
                     <div className="mt-3 pt-2 border-t">

@@ -1,9 +1,7 @@
-// pages/index.tsx
 import Link from "next/link";
 import Navigation from "@/components/Navigation";
 import { Globe } from "@/components/Globe";
 import Image from "next/image";
-
 
 export default function Home() {
   return (

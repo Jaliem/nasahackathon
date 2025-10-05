@@ -4,7 +4,8 @@
       "WebFetch(domain:www.earthdata.nasa.gov)",
       "Bash(npm run build:*)",
       "WebFetch(domain:aqicn.org)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(npm install:*)"
     ],
     "deny": [],
     "ask": []

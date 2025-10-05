@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 
 const MOVEMENT_DAMPING = 1400
 
-const GLOBE_CONFIG: COBEOptions = {
+const GLOBE_CONFIG: Partial<COBEOptions> = {
   onRender: () => {},
   devicePixelRatio: 2,
   phi: 0,
@@ -94,15 +94,15 @@ export function Globe({
   config = GLOBE_CONFIG,
 }: {
   className?: string
-  config?: COBEOptions
+  config?: Partial<COBEOptions>
 }) {
-  const phiRef = useRef(0) // Changed to useRef
+  const phiRef = useRef(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const pointerInteracting = useRef<number | null>(null)
   const pointerInteractionMovement = useRef(0)
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 })
-  
+
   const r = useMotionValue(0)
   const rs = useSpring(r, {
     mass: 1,
@@ -142,7 +142,7 @@ export function Globe({
         if (!pointerInteracting.current) phiRef.current += 0.005
         state.phi = phiRef.current + rs.get()
       },
-    })
+    } as COBEOptions)
 
     setTimeout(() => {
       if (canvasRef.current) {

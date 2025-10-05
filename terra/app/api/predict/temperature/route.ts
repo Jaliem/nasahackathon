@@ -8,11 +8,11 @@ const NASA_POWER_BASE_URL = 'https://power.larc.nasa.gov/api/temporal/daily/poin
 
 async function fetchNASAPowerTemperature(lat: number, lng: number) {
   try {
-    // Get date range (last 7 days)
+    // Get date range (last 14 days to ensure we get at least 7 valid days)
     const today = new Date()
     const endDate = today.toISOString().split('T')[0].replace(/-/g, '')
     const startDateObj = new Date(today)
-    startDateObj.setDate(startDateObj.getDate() - 7)
+    startDateObj.setDate(startDateObj.getDate() - 14)
     const startDate = startDateObj.toISOString().split('T')[0].replace(/-/g, '')
 
     // Fetch NASA POWER data
@@ -85,32 +85,25 @@ async function fetchGIBSTemperatureData(lat: number, lng: number) {
     // Try to get real NASA POWER data first
     const nasaPowerData = await fetchNASAPowerTemperature(lat, lng)
 
-    let currentTemp: number
-
-    if (nasaPowerData) {
-      // Use real NASA POWER data
-      currentTemp = nasaPowerData.currentTemp
-      console.log('✅ Using NASA POWER real temperature:', currentTemp)
-    } else {
-      // Fallback to climate-based model
-      const baseTemp = 15
-      const latitudeEffect = (45 - Math.abs(lat)) * 0.6 // Warmer near equator
-      const seasonalEffect = Math.sin((today.getMonth() / 12) * 2 * Math.PI) * 10
-      currentTemp = Math.round(baseTemp + latitudeEffect + seasonalEffect)
-      console.log('⚠️ Using fallback climate model temperature:', currentTemp)
+    if (!nasaPowerData) {
+      throw new Error('No temperature data available for this location. NASA POWER API failed to return valid data.')
     }
+
+    // Use real NASA POWER data
+    const currentTemp = nasaPowerData.currentTemp
+    console.log('✅ Using NASA POWER real temperature:', currentTemp)
 
     return {
       currentTemp,
       nasaPowerData,
-      source: nasaPowerData ? 'NASA POWER (Real Satellite/Model Data)' : 'NASA GIBS MODIS Terra Land Surface Temperature',
+      source: 'NASA POWER (Real Satellite/Model Data)',
       layer: 'MODIS_Terra_Land_Surface_Temp_Day',
       date: dateStr,
-      resolution: nasaPowerData ? '0.5° x 0.5°' : '1km',
+      resolution: '0.5° x 0.5°',
       gibsUrl: `${GIBS_BASE_URL}/MODIS_Terra_Land_Surface_Temp_Day/default/${dateStr}`,
     }
   } catch (error) {
-    throw new Error('Failed to fetch temperature data')
+    throw error
   }
 }
 
@@ -126,42 +119,42 @@ export async function POST(request: NextRequest) {
     // Generate forecast based on current temperature and climate trends
     const { currentTemp, nasaPowerData } = gibsData
 
-    let forecast
-    if (nasaPowerData?.historicalTemps && nasaPowerData.historicalTemps.length >= 7) {
-      // Use real historical data as forecast
-      forecast = nasaPowerData.historicalTemps.map((temp: number, i: number) => ({
-        day: i + 1,
-        temp,
-        source: 'NASA POWER (Historical)',
-      }))
-    } else {
-      // Fallback forecast based on current temp
-      forecast = Array.from({ length: 7 }, (_, i) => ({
-        day: i + 1,
-        temp: currentTemp + Math.round(Math.sin(i / 7 * Math.PI) * 3) + Math.round((Math.random() - 0.5) * 2),
-        source: i === 0 ? 'Current' : 'Trend Model',
-      }))
+    if (!nasaPowerData?.historicalTemps || nasaPowerData.historicalTemps.length === 0) {
+      throw new Error('No historical temperature data available from NASA POWER API')
     }
 
-    const isRealData = nasaPowerData?.dataAvailable
+    // Use real historical data as forecast (use available data, pad with current temp if needed)
+    const availableForecasts = nasaPowerData.historicalTemps.map((temp: number, i: number) => ({
+      day: i + 1,
+      temp,
+      source: 'NASA POWER (Historical)',
+    }))
+
+    // If we have less than 7 days, pad with current temperature for remaining days
+    const forecast = [...availableForecasts]
+    while (forecast.length < 7) {
+      forecast.push({
+        day: forecast.length + 1,
+        temp: currentTemp,
+        source: 'NASA POWER (Current)',
+      })
+    }
 
     const response = {
       success: true,
-      prediction: isRealData
-        ? `Temperature: ${currentTemp}°C. Based on real NASA POWER satellite and model data (last 7 days historical).`
-        : `Temperature forecast: ${currentTemp}°C (±3°C). Based on NASA GIBS MODIS satellite data and climate patterns.`,
+      prediction: `Temperature: ${currentTemp}°C. Based on real NASA POWER satellite and model data (last 7 days historical).`,
       data: {
         location: { lat, lng },
         currentTemp: gibsData.currentTemp,
         forecast,
         metadata: {
           dataSource: gibsData.source,
-          dataType: isRealData ? 'Real NASA POWER Data' : 'Climate Model Estimate',
+          dataType: 'Real NASA POWER Data',
           gibsLayer: gibsData.layer,
           observationDate: nasaPowerData?.latestDate || gibsData.date,
           spatialResolution: gibsData.resolution,
           tileUrl: gibsData.gibsUrl,
-          nasaPowerAvailable: isRealData,
+          nasaPowerAvailable: true,
         },
       },
     }

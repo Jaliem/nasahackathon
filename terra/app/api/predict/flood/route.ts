@@ -98,24 +98,13 @@ async function fetchGIBSFloodRiskData(lat: number, lng: number) {
     // Try to get real NASA POWER precipitation data
     const nasaPowerData = await fetchNASAPowerPrecipitation(lat, lng)
 
-    let annualPrecipitation: number
-    let precipitationSource: string
-
-    if (nasaPowerData) {
-      annualPrecipitation = nasaPowerData.annualPrecipitation
-      precipitationSource = 'NASA POWER (Real Satellite Data)'
-      console.log('✅ Using NASA POWER real precipitation:', annualPrecipitation)
-    } else {
-      // Fallback: estimate based on geographic factors
-      const coastalFactor = Math.abs(lat) < 40 ? 25 : 10
-      const lowLandFactor = Math.abs(lat) < 50 ? 15 : 5
-      const month = today.getMonth()
-      const rainySeasonFactor = Math.abs(Math.sin((month / 12) * 2 * Math.PI)) * 20
-      const baseRisk = coastalFactor + lowLandFactor + rainySeasonFactor
-      annualPrecipitation = Math.round(600 + (baseRisk * 15) + (Math.random() * 400))
-      precipitationSource = 'Geographic Model Estimate'
-      console.log('⚠️ Using fallback precipitation model:', annualPrecipitation)
+    if (!nasaPowerData) {
+      throw new Error('No precipitation data available for this location. NASA POWER API failed to return valid data.')
     }
+
+    const annualPrecipitation = nasaPowerData.annualPrecipitation
+    const precipitationSource = 'NASA POWER (Real Satellite Data)'
+    console.log('✅ Using NASA POWER real precipitation:', annualPrecipitation)
 
     // Calculate flood risk based on precipitation and geography
     // High precipitation areas (>1500mm/year) = higher risk
@@ -127,9 +116,7 @@ async function fetchGIBSFloodRiskData(lat: number, lng: number) {
     const lowLandFactor = Math.abs(lat) < 50 ? 15 : 5 // Low elevation assumption
 
     // Recent precipitation increases short-term risk
-    const recentPrecFactor = nasaPowerData?.recentDailyAverage
-      ? Math.min((nasaPowerData.recentDailyAverage / 10) * 20, 20)
-      : 0
+    const recentPrecFactor = Math.min((nasaPowerData.recentDailyAverage / 10) * 20, 20)
 
     const floodRisk = Math.min(
       Math.round(precipitationFactor + coastalFactor + lowLandFactor + recentPrecFactor),
@@ -137,9 +124,7 @@ async function fetchGIBSFloodRiskData(lat: number, lng: number) {
     )
 
     // Estimate soil moisture based on recent precipitation
-    const soilMoisture = nasaPowerData?.recentDailyAverage
-      ? Math.min(0.3 + (nasaPowerData.recentDailyAverage / 10) * 0.4, 0.9).toFixed(3)
-      : ((floodRisk / 100) * 0.5 + 0.2).toFixed(3)
+    const soilMoisture = Math.min(0.3 + (nasaPowerData.recentDailyAverage / 10) * 0.4, 0.9).toFixed(3)
 
     return {
       risk: floodRisk,
@@ -154,14 +139,14 @@ async function fetchGIBSFloodRiskData(lat: number, lng: number) {
         'SMAP_L4_Analyzed_Surface_Soil_Moisture',
       ],
       date: dateStr,
-      resolution: nasaPowerData ? '0.5° x 0.5°' : '10km',
+      resolution: '0.5° x 0.5°',
       gibsUrls: {
         precipitation: `${GIBS_BASE_URL}/IMERG_Precipitation_Rate/default/${dateStr}`,
         soilMoisture: `${GIBS_BASE_URL}/SMAP_L4_Analyzed_Surface_Soil_Moisture/default/${dateStr}`,
       },
     }
   } catch (error) {
-    throw new Error('Failed to fetch flood risk data')
+    throw error
   }
 }
 
@@ -199,13 +184,9 @@ export async function POST(request: NextRequest) {
       risk > 60 ? 'Consider relocating critical infrastructure from high-risk zones' : '',
     ].filter(Boolean)
 
-    const isRealData = gibsData.nasaPowerData?.dataAvailable
-
     const response = {
       success: true,
-      prediction: isRealData
-        ? `Flood risk assessment: ${risk}% (${riskLevel} Risk). Based on real NASA POWER precipitation data (${gibsData.precipitation} mm/year) and geographic analysis.`
-        : `Flood risk assessment: ${risk}% (${riskLevel} Risk). Analysis based on NASA GIBS GPM precipitation data, SMAP soil moisture, elevation patterns, and climate models.`,
+      prediction: `Flood risk assessment: ${risk}% (${riskLevel} Risk). Based on real NASA POWER precipitation data (${gibsData.precipitation} mm/year) and geographic analysis.`,
       data: {
         location: { lat, lng },
         overallRisk: risk,
@@ -213,9 +194,7 @@ export async function POST(request: NextRequest) {
         factors: {
           elevation, // meters
           precipitation: gibsData.precipitation, // mm/year
-          recentDailyPrecipitation: gibsData.nasaPowerData?.recentDailyAverage
-            ? gibsData.nasaPowerData.recentDailyAverage.toFixed(2)
-            : 'N/A', // mm/day
+          recentDailyPrecipitation: gibsData.nasaPowerData?.recentDailyAverage.toFixed(2), // mm/day
           soilMoisture: gibsData.soilMoisture, // 0-1 scale
           proximityToWater, // km
           drainageCapacity, // percentage
@@ -224,12 +203,12 @@ export async function POST(request: NextRequest) {
         historicalEvents: Math.round((risk / 100) * 8), // Estimated based on risk
         metadata: {
           dataSource: gibsData.source,
-          dataType: isRealData ? 'Real NASA POWER Precipitation Data' : 'Geographic Model Estimate',
+          dataType: 'Real NASA POWER Precipitation Data',
           gibsLayers: gibsData.layers,
           observationDate: gibsData.date,
           spatialResolution: gibsData.resolution,
           tileUrls: gibsData.gibsUrls,
-          nasaPowerAvailable: isRealData,
+          nasaPowerAvailable: true,
         },
       },
     }

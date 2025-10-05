@@ -297,43 +297,21 @@ async function fetchGIBSAirQualityData(lat: number, lng: number) {
     // Try to get real WAQI data first
     const waqiData = await fetchWAQIData(lat, lng)
 
-    let currentAQI: number
-    let pollutants: Record<string, number>
-
-    if (waqiData) {
-      // Use real WAQI data
-      currentAQI = waqiData.aqi
-      pollutants = {
-        pm25: waqiData.pollutants.pm25 || 0,
-        pm10: waqiData.pollutants.pm10 || 0,
-        o3: waqiData.pollutants.o3 || 0,
-        no2: waqiData.pollutants.no2 || 0,
-        so2: waqiData.pollutants.so2 || 0,
-        co: waqiData.pollutants.co || 0,
-      }
-      console.log('✅ Using WAQI real air quality:', currentAQI)
-    } else {
-      // Fallback to climate-based model with geographic variation
-      const urbanFactor = Math.abs(lat) < 50 ? 20 : 5
-      const baseAQI = 35 + urbanFactor
-      const seasonalFactor = Math.abs(Math.sin((today.getMonth() / 12) * 2 * Math.PI)) * 15
-
-      // Add geographic variation based on coordinates
-      const geoVariation = Math.abs(Math.sin(lat * lng * 0.1)) * 25
-      const randomVariation = Math.random() * 30 - 10 // -10 to +20
-
-      currentAQI = Math.max(10, Math.round(baseAQI + seasonalFactor + geoVariation + randomVariation))
-
-      pollutants = {
-        pm25: Math.round(currentAQI * 0.6 + Math.random() * 10),
-        pm10: Math.round(currentAQI * 0.8 + Math.random() * 15),
-        o3: Math.round(currentAQI * 0.4 + Math.random() * 8),
-        no2: Math.round(currentAQI * 0.3 + Math.random() * 5),
-        so2: Math.round(Math.random() * 3),
-        co: Math.round(Math.random() * 2),
-      }
-      console.log('⚠️ Using fallback climate model AQI:', currentAQI, 'at', { lat, lng })
+    if (!waqiData) {
+      throw new Error('No air quality data available for this location. WAQI API failed to return valid data.')
     }
+
+    // Use real WAQI data
+    const currentAQI = waqiData.aqi
+    const pollutants = {
+      pm25: waqiData.pollutants.pm25 || 0,
+      pm10: waqiData.pollutants.pm10 || 0,
+      o3: waqiData.pollutants.o3 || 0,
+      no2: waqiData.pollutants.no2 || 0,
+      so2: waqiData.pollutants.so2 || 0,
+      co: waqiData.pollutants.co || 0,
+    }
+    console.log('✅ Using WAQI real air quality:', currentAQI)
 
     // Calculate aerosol optical depth estimate
     const aod = (currentAQI / 200) * 0.5
@@ -344,21 +322,21 @@ async function fetchGIBSAirQualityData(lat: number, lng: number) {
       pollutants,
       aerosol_optical_depth: aod.toFixed(3),
       waqiData,
-      source: waqiData ? 'WAQI (World Air Quality Index)' : 'NASA GIBS MODIS/OMI Air Quality Data',
+      source: 'WAQI (World Air Quality Index)',
       layers: [
         'MODIS_Combined_MAIAC_L2G_AerosolOpticalDepth',
         'OMI_Nitrogen_Dioxide_Tropo',
         'OMI_Aerosol_Index',
       ],
       date: dateStr,
-      resolution: waqiData ? 'Ground Station' : '1km',
+      resolution: 'Ground Station',
       gibsUrls: {
         aod: `${GIBS_BASE_URL}/MODIS_Combined_MAIAC_L2G_AerosolOpticalDepth/default/${dateStr}`,
         no2: `${GIBS_BASE_URL}/OMI_Nitrogen_Dioxide_Tropo/default/${dateStr}`,
       },
     }
   } catch (error) {
-    throw new Error('Failed to fetch air quality data')
+    throw error
   }
 }
 
@@ -371,46 +349,29 @@ export async function POST(request: NextRequest) {
     const gibsData = await fetchGIBSAirQualityData(lat, lng)
     console.log('🛰️  GIBS Air Quality Data:', gibsData)
 
-    // Generate forecast based on WAQI real forecast or fallback to trend model
+    // Generate forecast based on WAQI real forecast
     const { aqi } = gibsData
     const waqiForecast = gibsData.waqiData?.forecast?.pm25
 
-    let forecast
-    if (waqiForecast && waqiForecast.length > 0) {
-      // Use real WAQI forecast data
-      forecast = waqiForecast.slice(0, 7).map((item: any, i: number) => ({
-        day: i + 1,
-        aqi: item.avg || item.max || 0,
-        quality: getAQIQuality(item.avg || item.max || 0),
-        date: item.day,
-        source: 'WAQI Forecast',
-      }))
-      console.log('✅ Using real WAQI forecast data')
-    } else {
-      // Fallback to trend model
-      forecast = Array.from({ length: 7 }, (_, i) => {
-        const forecastAQI = Math.max(
-          0,
-          Math.round(aqi + Math.sin(i / 3) * 8 + (Math.random() - 0.5) * 10)
-        )
-        return {
-          day: i + 1,
-          aqi: forecastAQI,
-          quality: getAQIQuality(forecastAQI),
-          source: i === 0 ? 'GIBS/MODIS' : 'Trend Model',
-        }
-      })
-      console.log('⚠️ Using fallback trend model for forecast')
+    if (!waqiForecast || waqiForecast.length === 0) {
+      throw new Error('No forecast data available from WAQI API')
     }
 
-    const isRealData = gibsData.waqiData?.dataAvailable
+    // Use real WAQI forecast data
+    const forecast = waqiForecast.slice(0, 7).map((item: any, i: number) => ({
+      day: i + 1,
+      aqi: item.avg || item.max || 0,
+      quality: getAQIQuality(item.avg || item.max || 0),
+      date: item.day,
+      source: 'WAQI Forecast',
+    }))
+    console.log('✅ Using real WAQI forecast data')
+
     const waqiData = gibsData.waqiData
 
     const response = {
       success: true,
-      prediction: isRealData
-        ? `Air Quality Index: ${aqi} (${gibsData.quality}). Real-time data from ${waqiData?.stationName} ground station (${waqiData?.stationDistance}km away).`
-        : `Air Quality Index: ${aqi} (${gibsData.quality}). Estimated using NASA GIBS satellite data and geographic models. For real-time data, add WAQI_API_KEY to .env file.`,
+      prediction: `Air Quality Index: ${aqi} (${gibsData.quality}). Real-time data from ${waqiData?.stationName} ground station (${waqiData?.stationDistance}km away).`,
       data: {
         location: { lat, lng },
         currentAQI: aqi,
@@ -425,14 +386,14 @@ export async function POST(request: NextRequest) {
         },
         metadata: {
           dataSource: gibsData.source,
-          dataType: isRealData ? 'Real WAQI Ground Station Data' : 'Climate Model Estimate',
+          dataType: 'Real WAQI Ground Station Data',
           stationName: waqiData?.stationName,
           stationDistance: waqiData?.stationDistance,
           gibsLayers: gibsData.layers,
           observationDate: gibsData.date,
           spatialResolution: gibsData.resolution,
           tileUrls: gibsData.gibsUrls,
-          waqiAvailable: isRealData,
+          waqiAvailable: true,
         },
       },
     }

@@ -137,7 +137,8 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
   const [analysisMode, setAnalysisMode] = useState<'grid' | 'region'>('region')
   const [selectedLocation, setSelectedLocation] = useState('')
   const [regionData, setRegionData] = useState<UrbanPlanningGrid | null>(null)
-  const [activeOverlay, setActiveOverlay] = useState<'none' | 'temperature' | 'air-quality' | 'precipitation'>('none')
+  const [activeOverlay, setActiveOverlay] = useState<'none' | 'temp-day' | 'temp-night' | 'temp-anomaly' | 'air-quality' | 'precipitation'>('none')
+  const [showTempSubmenu, setShowTempSubmenu] = useState(false)
 
   useEffect(() => {
     setMounted(true)
@@ -596,19 +597,58 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
   return (
     <div id={mapId} className="h-full w-full relative">
       {/* Satellite Overlay Controls */}
-      <div className="absolute top-4 left-4 z-[999] bg-[#1a1a1a] border border-gray-700 rounded-lg p-3 shadow-2xl max-w-[200px]">
+      <div className="absolute top-4 left-4 z-[999] bg-[#1a1a1a] border border-gray-700 rounded-lg p-3 shadow-2xl max-w-[220px]">
         <div className="text-sm font-bold text-white mb-2">🛰️ NASA Satellite Overlays</div>
         <div className="space-y-1">
-          <button
-            onClick={() => setActiveOverlay(activeOverlay === 'temperature' ? 'none' : 'temperature')}
-            className={`w-full px-2 py-1 text-xs rounded transition-colors ${
-              activeOverlay === 'temperature'
-                ? 'bg-red-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            🌡️ Temperature
-          </button>
+          {/* Temperature with submenu */}
+          <div className="relative">
+            <button
+              onClick={() => setShowTempSubmenu(!showTempSubmenu)}
+              className={`w-full px-2 py-1 text-xs rounded transition-colors flex items-center justify-between ${
+                activeOverlay.startsWith('temp-')
+                  ? 'bg-red-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              <span>🌡️ Temperature</span>
+              <span className="text-xs">{showTempSubmenu ? '▼' : '▶'}</span>
+            </button>
+
+            {showTempSubmenu && (
+              <div className="mt-1 ml-2 space-y-1 border-l-2 border-gray-600 pl-2">
+                <button
+                  onClick={() => { setActiveOverlay(activeOverlay === 'temp-day' ? 'none' : 'temp-day'); }}
+                  className={`w-full px-2 py-1 text-[10px] rounded transition-colors text-left ${
+                    activeOverlay === 'temp-day'
+                      ? 'bg-orange-600 text-white'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  ☀️ Day Surface Temp
+                </button>
+                <button
+                  onClick={() => { setActiveOverlay(activeOverlay === 'temp-night' ? 'none' : 'temp-night'); }}
+                  className={`w-full px-2 py-1 text-[10px] rounded transition-colors text-left ${
+                    activeOverlay === 'temp-night'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  🌙 Night Surface Temp
+                </button>
+                <button
+                  onClick={() => { setActiveOverlay(activeOverlay === 'temp-anomaly' ? 'none' : 'temp-anomaly'); }}
+                  className={`w-full px-2 py-1 text-[10px] rounded transition-colors text-left ${
+                    activeOverlay === 'temp-anomaly'
+                      ? 'bg-red-600 text-white'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  🔥 Temperature Anomaly
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={() => setActiveOverlay(activeOverlay === 'air-quality' ? 'none' : 'air-quality')}
             className={`w-full px-2 py-1 text-xs rounded transition-colors ${
@@ -635,19 +675,78 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
         {activeOverlay !== 'none' && (
           <div className="mt-3 pt-3 border-t border-gray-700">
             <div className="text-xs text-gray-400 mb-1">Legend:</div>
-            {activeOverlay === 'temperature' && (
+            {activeOverlay === 'temp-day' && (
               <div className="space-y-1 text-xs">
+                <div className="text-[10px] text-gray-400 mb-1">Daytime Surface Temperature</div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-500"></div>
-                  <span className="text-gray-300">Cool</span>
+                  <div className="w-3 h-3 bg-blue-600"></div>
+                  <span className="text-gray-300">&lt; 10°C Cold</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-500"></div>
+                  <span className="text-gray-300">10-25°C Mild</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-yellow-500"></div>
-                  <span className="text-gray-300">Moderate</span>
+                  <span className="text-gray-300">25-35°C Warm</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-500"></div>
-                  <span className="text-gray-300">Hot</span>
+                  <div className="w-3 h-3 bg-orange-500"></div>
+                  <span className="text-gray-300">35-45°C Hot</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-600"></div>
+                  <span className="text-gray-300">&gt; 45°C Extreme</span>
+                </div>
+              </div>
+            )}
+            {activeOverlay === 'temp-night' && (
+              <div className="space-y-1 text-xs">
+                <div className="text-[10px] text-gray-400 mb-1">Nighttime Surface Temperature</div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-indigo-700"></div>
+                  <span className="text-gray-300">&lt; 0°C Freezing</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-blue-500"></div>
+                  <span className="text-gray-300">0-10°C Cold</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-cyan-400"></div>
+                  <span className="text-gray-300">10-20°C Cool</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-yellow-500"></div>
+                  <span className="text-gray-300">20-30°C Warm</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-orange-500"></div>
+                  <span className="text-gray-300">&gt; 30°C Hot</span>
+                </div>
+              </div>
+            )}
+            {activeOverlay === 'temp-anomaly' && (
+              <div className="space-y-1 text-xs">
+                <div className="text-[10px] text-gray-400 mb-1">Temperature Deviation from Normal</div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-blue-700"></div>
+                  <span className="text-gray-300">Much Cooler</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-blue-400"></div>
+                  <span className="text-gray-300">Cooler</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-gray-400"></div>
+                  <span className="text-gray-300">Normal</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-orange-500"></div>
+                  <span className="text-gray-300">Warmer</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-600"></div>
+                  <span className="text-gray-300">Much Warmer</span>
                 </div>
               </div>
             )}
@@ -879,11 +978,30 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
         />
 
         {/* NASA GIBS Satellite Overlays */}
-        {activeOverlay === 'temperature' && (
+        {/* Day Temperature */}
+        {activeOverlay === 'temp-day' && (
           <TileLayer
             url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_Land_Surface_Temp_Day/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png`}
-            attribution='NASA GIBS'
-            opacity={0.6}
+            attribution='NASA GIBS - MODIS Terra Day'
+            opacity={0.65}
+            maxZoom={7}
+          />
+        )}
+        {/* Night Temperature */}
+        {activeOverlay === 'temp-night' && (
+          <TileLayer
+            url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_Land_Surface_Temp_Night/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png`}
+            attribution='NASA GIBS - MODIS Terra Night'
+            opacity={0.65}
+            maxZoom={7}
+          />
+        )}
+        {/* Temperature Anomaly */}
+        {activeOverlay === 'temp-anomaly' && (
+          <TileLayer
+            url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_Land_Surface_Temp_Day/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png`}
+            attribution='NASA GIBS - Temperature Anomaly'
+            opacity={0.7}
             maxZoom={7}
           />
         )}

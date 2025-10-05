@@ -137,6 +137,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
   const [analysisMode, setAnalysisMode] = useState<'grid' | 'region'>('region')
   const [selectedLocation, setSelectedLocation] = useState('')
   const [regionData, setRegionData] = useState<UrbanPlanningGrid | null>(null)
+  const [activeOverlay, setActiveOverlay] = useState<'none' | 'temperature' | 'air-quality' | 'precipitation'>('none')
 
   useEffect(() => {
     setMounted(true)
@@ -594,6 +595,101 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
 
   return (
     <div id={mapId} className="h-full w-full relative">
+      {/* Satellite Overlay Controls */}
+      <div className="absolute top-4 left-4 z-[999] bg-[#1a1a1a] border border-gray-700 rounded-lg p-3 shadow-2xl max-w-[200px]">
+        <div className="text-sm font-bold text-white mb-2">🛰️ NASA Satellite Overlays</div>
+        <div className="space-y-1">
+          <button
+            onClick={() => setActiveOverlay(activeOverlay === 'temperature' ? 'none' : 'temperature')}
+            className={`w-full px-2 py-1 text-xs rounded transition-colors ${
+              activeOverlay === 'temperature'
+                ? 'bg-red-600 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            🌡️ Temperature
+          </button>
+          <button
+            onClick={() => setActiveOverlay(activeOverlay === 'air-quality' ? 'none' : 'air-quality')}
+            className={`w-full px-2 py-1 text-xs rounded transition-colors ${
+              activeOverlay === 'air-quality'
+                ? 'bg-purple-600 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            💨 Air Quality
+          </button>
+          <button
+            onClick={() => setActiveOverlay(activeOverlay === 'precipitation' ? 'none' : 'precipitation')}
+            className={`w-full px-2 py-1 text-xs rounded transition-colors ${
+              activeOverlay === 'precipitation'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            🌊 Precipitation
+          </button>
+        </div>
+
+        {/* Legend for active overlay */}
+        {activeOverlay !== 'none' && (
+          <div className="mt-3 pt-3 border-t border-gray-700">
+            <div className="text-xs text-gray-400 mb-1">Legend:</div>
+            {activeOverlay === 'temperature' && (
+              <div className="space-y-1 text-xs">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-blue-500"></div>
+                  <span className="text-gray-300">Cool</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-yellow-500"></div>
+                  <span className="text-gray-300">Moderate</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-500"></div>
+                  <span className="text-gray-300">Hot</span>
+                </div>
+              </div>
+            )}
+            {activeOverlay === 'air-quality' && (
+              <div className="space-y-1 text-xs">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-500"></div>
+                  <span className="text-gray-300">Clean</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-yellow-500"></div>
+                  <span className="text-gray-300">Moderate</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-500"></div>
+                  <span className="text-gray-300">Polluted</span>
+                </div>
+              </div>
+            )}
+            {activeOverlay === 'precipitation' && (
+              <div className="space-y-1 text-xs">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-cyan-300"></div>
+                  <span className="text-gray-300">Light</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-blue-500"></div>
+                  <span className="text-gray-300">Moderate</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-purple-600"></div>
+                  <span className="text-gray-300">Heavy</span>
+                </div>
+              </div>
+            )}
+            <div className="mt-2 text-[10px] text-gray-500 italic">
+              Real-time NASA GIBS satellite data
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Urban Planning Controls */}
       <div className="absolute top-4 right-4 z-[1001] bg-[#1a1a1a] border border-gray-700 rounded-lg p-4 shadow-2xl max-w-sm">
         <div className="text-lg font-bold text-white mb-4 flex items-center gap-2">
@@ -781,6 +877,32 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
         />
+
+        {/* NASA GIBS Satellite Overlays */}
+        {activeOverlay === 'temperature' && (
+          <TileLayer
+            url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_Land_Surface_Temp_Day/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png`}
+            attribution='NASA GIBS'
+            opacity={0.6}
+            maxZoom={7}
+          />
+        )}
+        {activeOverlay === 'air-quality' && (
+          <TileLayer
+            url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Combined_MAIAC_L2G_AerosolOpticalDepth/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png`}
+            attribution='NASA GIBS'
+            opacity={0.6}
+            maxZoom={6}
+          />
+        )}
+        {activeOverlay === 'precipitation' && (
+          <TileLayer
+            url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/IMERG_Precipitation_Rate/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`}
+            attribution='NASA GIBS'
+            opacity={0.6}
+            maxZoom={8}
+          />
+        )}
 
         <MapEventHandler onMapClick={handleMapClick} />
 

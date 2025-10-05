@@ -17,7 +17,7 @@ const MapComponent = dynamic<MapComponentProps>(
 export default function Dashboard() {
   const [selectedRegion, setSelectedRegion] = useState<RegionData | null>(null)
   const [mapKey] = useState(() => `dashboard-map-${Date.now()}`)
-  const [searchQuery, setSearchQuery] = useState('JAKARTA')
+  const [searchQuery, setSearchQuery] = useState('')
   const [searchResult, setSearchResult] = useState<{ lat: number; lng: number; name: string } | null>(null)
   const [activeOverlay, setActiveOverlay] = useState<OverlayType>('temperature')
   const [overlayState, setOverlayState] = useState<OverlayState>({ hasGeometry: false, overlayMetrics: null })

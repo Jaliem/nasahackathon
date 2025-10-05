@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useState, useRef, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import Navigation from '@/components/Navigation'
 import type { OverlayType, RegionData } from '@/components/MapComponent'
@@ -9,12 +9,6 @@ const MapComponent = dynamic(() => import('@/components/MapComponent'), {
   ssr: false,
   loading: () => <div className="h-full flex items-center justify-center text-gray-400">Loading map...</div>,
 })
-
-const DEFAULT_REGION = {
-  name: 'New York, USA',
-  lat: 40.7128,
-  lng: -74.006,
-}
 
 
 
@@ -72,162 +66,7 @@ function DataCard({ title, value, risk, overlayType, activeOverlay, onSelectOver
   return content
 }
 
-interface PredictButtonProps {
-  type: 'temperature' | 'air-quality' | 'flood'
-  region: RegionData
-}
 
-interface PredictionData {
-  prediction: string
-  data?: {
-    forecast?: Array<{ day: number; temp?: number; aqi?: number; quality?: string }>
-    metadata?: {
-      dataSource?: string
-      gibsLayer?: string
-      gibsLayers?: string[]
-      observationDate?: string
-      spatialResolution?: string
-    }
-    pollutants?: Record<string, number | string>
-    factors?: Record<string, number | string>
-    recommendations?: string[]
-  }
-}
-
-function PredictButton({ type, region }: PredictButtonProps) {
-  const [loading, setLoading] = useState(false)
-  const [predictionData, setPredictionData] = useState<PredictionData | null>(null)
-
-  const handlePredict = async () => {
-    setLoading(true)
-    console.log(`🎯 Fetching ${type} prediction for:`, { lat: region.lat, lng: region.lng })
-
-    try {
-      const response = await fetch(`/api/predict/${type}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lat: region.lat, lng: region.lng }),
-      })
-      const data = await response.json()
-
-      console.log(`📊 ${type} prediction received:`, data)
-      console.log(`🛰️  GIBS Metadata:`, data.data?.metadata)
-
-      if (type === 'air-quality' && data.data?.pollutants) {
-        console.log('💨 Pollutants:', data.data.pollutants)
-      }
-
-      if (type === 'flood' && data.data?.factors) {
-        console.log('🌊 Flood Factors:', data.data.factors)
-      }
-
-      if (type === 'temperature' && data.data?.forecast) {
-        console.log('🌡️  Temperature Forecast:', data.data.forecast)
-      }
-
-      setPredictionData(data)
-    } catch (error) {
-      console.error(`❌ Error fetching ${type} prediction:`, error)
-      setPredictionData({ prediction: 'Error generating prediction' })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const labels = {
-    temperature: 'Temperature Forecast',
-    'air-quality': 'Air Quality Forecast',
-    flood: 'Flood Risk Assessment',
-  }
-
-  return (
-    <div className="space-y-2">
-      <button
-        onClick={handlePredict}
-        disabled={loading}
-        className="w-full px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:bg-[#222] disabled:text-gray-600 text-gray-300 text-sm border border-gray-700 transition-colors"
-      >
-        {loading ? 'Loading...' : labels[type]}
-      </button>
-      {predictionData && (
-        <div className="p-3 bg-[#222] border border-gray-700 text-xs space-y-3">
-          <p className="text-gray-400">{predictionData.prediction}</p>
-
-          {predictionData.data?.forecast && (
-            <div className="pt-2 border-t border-gray-700">
-              <p className="text-gray-500 mb-2">7-Day Forecast:</p>
-              <div className="space-y-1">
-                {predictionData.data.forecast.slice(0, 3).map((item) => (
-                  <div key={item.day} className="flex justify-between text-gray-400">
-                    <span>Day {item.day}:</span>
-                    <span>
-                      {item.temp ? `${item.temp}°C` : item.aqi ? `AQI ${item.aqi}` : '-'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {predictionData.data?.metadata && (
-            <div className="pt-2 border-t border-gray-700">
-              <p className="text-gray-500 mb-1">Data Source:</p>
-              <p className="text-gray-400">{predictionData.data.metadata.dataSource}</p>
-              {predictionData.data.metadata.observationDate && (
-                <p className="text-gray-500 mt-1">
-                  Date: {predictionData.data.metadata.observationDate}
-                </p>
-              )}
-              {predictionData.data.metadata.spatialResolution && (
-                <p className="text-gray-500">
-                  Resolution: {predictionData.data.metadata.spatialResolution}
-                </p>
-              )}
-            </div>
-          )}
-
-          {predictionData.data?.pollutants && (
-            <div className="pt-2 border-t border-gray-700">
-              <p className="text-gray-500 mb-1">Pollutants:</p>
-              <div className="grid grid-cols-2 gap-1">
-                {Object.entries(predictionData.data.pollutants).slice(0, 4).map(([key, value]) => (
-                  <div key={key} className="text-gray-400">
-                    {key.toUpperCase()}: {value}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {predictionData.data?.factors && (
-            <div className="pt-2 border-t border-gray-700">
-              <p className="text-gray-500 mb-1">Risk Factors:</p>
-              <div className="space-y-1">
-                {Object.entries(predictionData.data.factors).slice(0, 3).map(([key, value]) => (
-                  <div key={key} className="flex justify-between text-gray-400">
-                    <span className="capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
-                    <span>{value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {predictionData.data?.recommendations && (
-            <div className="pt-2 border-t border-gray-700">
-              <p className="text-gray-500 mb-1">Recommendations:</p>
-              <ul className="list-disc list-inside text-gray-400 space-y-1">
-                {predictionData.data.recommendations.slice(0, 2).map((rec, idx) => (
-                  <li key={idx} className="text-xs">{rec}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
 
 function getRiskLevel(value: number, type: string): 'low' | 'moderate' | 'high' {
   if (type === 'temperature') {
@@ -246,21 +85,56 @@ function getRiskLevel(value: number, type: string): 'low' | 'moderate' | 'high' 
   return 'moderate'
 }
 
-interface OverlayControlsProps {
-  activeOverlay: OverlayType
-  onToggle: (overlay: OverlayType) => void
-  overlayState: OverlayState
-}
+function Legend() {
+  const [layout, setLayout] = useState<'column' | 'row'>('column');
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartPos = useRef({ x: 0, y: 0 });
+  const legendRef = useRef<HTMLDivElement>(null);
 
-function OverlayControls({ activeOverlay, onToggle, overlayState }: OverlayControlsProps) {
-  const buttons: Array<{ id: OverlayType; label: string; activeClass: string }> = [
-    { id: 'temperature', label: 'Temperature Severity', activeClass: 'bg-red-600 text-white' },
-    { id: 'air-quality', label: 'Air Quality Severity', activeClass: 'bg-purple-600 text-white' },
-    { id: 'flood', label: 'Flood Risk Severity', activeClass: 'bg-blue-600 text-white' },
-    { id: 'combined', label: 'Combined Climate Risk', activeClass: 'bg-amber-600 text-white' },
-  ]
+  const handleLayoutToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLayout(prev => (prev === 'column' ? 'row' : 'column'));
+  };
 
-  const legendMap: Record<Exclude<OverlayType, 'none'>, { title: string; entries: Array<{ color: string; label: string }> }> = {
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    setIsDragging(true);
+    dragStartPos.current = {
+      x: e.clientX - offset.x,
+      y: e.clientY - offset.y,
+    };
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging || !legendRef.current) return;
+      const newX = e.clientX - dragStartPos.current.x;
+      const newY = e.clientY - dragStartPos.current.y;
+      legendRef.current.style.transform = `translate(${newX}px, ${newY}px)`;
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (!isDragging) return;
+      setIsDragging(false);
+      const finalX = e.clientX - dragStartPos.current.x;
+      const finalY = e.clientY - dragStartPos.current.y;
+      setOffset({ x: finalX, y: finalY });
+    };
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
+  const legendMap: Record<Exclude<OverlayType, 'none' | 'combined'>, { title: string; entries: Array<{ color: string; label:string }> }> = {
     temperature: {
       title: 'Temperature Risk Levels',
       entries: [
@@ -288,42 +162,54 @@ function OverlayControls({ activeOverlay, onToggle, overlayState }: OverlayContr
         { color: 'bg-red-600', label: 'Critical (> 80%)' },
       ],
     },
-    combined: {
-      title: 'Composite Climate Risk',
-      entries: [
-        { color: 'bg-green-500', label: 'Low (Score ≤ 30)' },
-        { color: 'bg-yellow-500', label: 'Moderate (31-50)' },
-        { color: 'bg-orange-500', label: 'High (51-70)' },
-        { color: 'bg-red-600', label: 'Critical (> 70)' },
-      ],
-    },
-  }
+  };
 
-  const showLegend = activeOverlay !== 'none' && overlayState.overlayMetrics && overlayState.hasGeometry
-  const legend = showLegend && legendMap[activeOverlay as Exclude<OverlayType, 'none'>]
+  const columnIcon = <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 3H13V5H3V3Z" fill="currentColor"/><path d="M3 7H13V9H3V7Z" fill="currentColor"/><path d="M3 11H13V13H3V11Z" fill="currentColor"/></svg>;
+  const rowIcon = <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 3H5V13H3V3Z" fill="currentColor"/><path d="M7 3H9V13H7V3Z" fill="currentColor"/><path d="M11 3H13V13H11V3Z" fill="currentColor"/></svg>;
 
   return (
-    <div className="bg-[#1a1a1a] border border-gray-700 rounded-lg p-3 shadow-inner">
-
-      {legend && (
-        <div className=" border-gray-700">
-          <div className="text-xs text-gray-400 mb-1">Legend</div>
-          <div className="space-y-1 text-xs">
-            <div className="text-[10px] text-gray-400 mb-1">{legend.title}</div>
-            {legend.entries.map((entry) => (
-              <div key={entry.label} className="flex items-center gap-2">
-                <div className={`w-3 h-3 ${entry.color}`}></div>
-                <span className="text-gray-300">{entry.label}</span>
+    <div
+      ref={legendRef}
+      className={`bg-[#1a1a1a]/80 backdrop-blur-sm border border-gray-700 rounded-lg shadow-lg p-4 transition-[max-width] duration-500 ease-in-out ${layout === 'column' ? 'max-w-xs' : ''}`}
+      style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
+    >
+      <div
+        className="flex justify-between items-center mb-3"
+        onMouseDown={handleMouseDown}
+        style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+      >
+        <h3 className="text-sm font-medium text-gray-200">Levels</h3>
+        <button
+          onClick={handleLayoutToggle}
+          className="text-gray-400 hover:text-white p-1 rounded"
+          title={layout === 'column' ? 'Switch to row layout' : 'Switch to column layout'}
+        >
+          {layout === 'column' ? rowIcon : columnIcon}
+        </button>
+      </div>
+      <div 
+        className="grid gap-x-6 gap-y-4 transition-[grid-template-columns] duration-500 ease-in-out"
+        style={{ gridTemplateColumns: layout === 'column' ? '1fr' : 'repeat(3, 1fr)' }}
+      >
+        {Object.values(legendMap).map((legend) => (
+            <div key={legend.title}>
+              <div className="text-xs text-gray-400 mb-2 font-semibold">{legend.title}</div>
+              <div className="space-y-1 text-xs">
+                {legend.entries.map((entry) => (
+                  <div key={entry.label} className="flex items-center gap-2">
+                    <div className={`w-3 h-3 ${entry.color} rounded-sm`}></div>
+                    <span className="text-gray-300">{entry.label}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <div className="mt-2 text-[10px] text-gray-500 italic">
-            Real-time NASA GIBS satellite data
-          </div>
-        </div>
-      )}
+            </div>
+        ))}
+      </div>
+      <div className="mt-3 text-[10px] text-gray-500 italic">
+        Real-time NASA GIBS satellite data
+      </div>
     </div>
-  )
+  );
 }
 
 type OverlayState = {
@@ -334,12 +220,8 @@ type OverlayState = {
 export default function Dashboard() {
   const [selectedRegion, setSelectedRegion] = useState<RegionData | null>(null)
   const [mapKey] = useState(() => `dashboard-map-${Date.now()}`)
-  const [searchQuery, setSearchQuery] = useState(DEFAULT_REGION.name)
-  const [searchResult, setSearchResult] = useState<{ lat: number; lng: number; name: string } | null>(() => ({
-    lat: DEFAULT_REGION.lat,
-    lng: DEFAULT_REGION.lng,
-    name: DEFAULT_REGION.name,
-  }))
+  const [searchQuery, setSearchQuery] = useState('JAKARTA')
+  const [searchResult, setSearchResult] = useState<{ lat: number; lng: number; name: string } | null>(null)
   const [activeOverlay, setActiveOverlay] = useState<OverlayType>('temperature')
   const [overlayState, setOverlayState] = useState<OverlayState>({ hasGeometry: false, overlayMetrics: null })
 
@@ -383,19 +265,21 @@ export default function Dashboard() {
         <div className="flex-1 relative">
           {/* Search Bar */}
           <div className="absolute top-6 right-6 z-[1000] w-[28rem] max-w-[calc(100%-3rem)]">
-            <form onSubmit={handleSearch} className="flex gap-3">
+            <form onSubmit={handleSearch} className="flex items-center bg-[#1a1a1a] border border-gray-700 rounded-full shadow-xl overflow-hidden pr-1 transition-shadow duration-300 focus-within:shadow-[0_0_15px_2px_rgba(255,255,255,0.1)]">
               <input
                 type="text"
                 placeholder="Search any city (e.g., Jakarta, Tokyo, Paris)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1 px-5 py-3 bg-[#1a1a1a] border border-gray-700 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-gray-500 rounded-lg shadow-xl"
+                className="flex-1 px-5 py-3 bg-transparent text-gray-200 placeholder-gray-500 focus:outline-none"
               />
               <button
                 type="submit"
-                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-xl"
+                className="p-2.5 m-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full"
               >
-                Search
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                  <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+                </svg>
               </button>
             </form>
           </div>
@@ -407,6 +291,10 @@ export default function Dashboard() {
             activeOverlay={activeOverlay}
             onOverlayStateChange={handleOverlayStateChange}
           />
+
+          <div className="absolute bottom-6 left-6 z-[1000]">
+            {overlayState.hasGeometry && <Legend />}
+          </div>
         </div>
 
         <aside className="w-96 bg-[#1a1a1a] overflow-y-auto border-l border-gray-800">
@@ -456,22 +344,9 @@ export default function Dashboard() {
                 />
 
                 
-                 <OverlayControls
-                  activeOverlay={activeOverlay}
-                  onToggle={handleOverlayToggle}
-                  overlayState={overlayState}
-                />
+                 
 
-                <div className="pt-4 border-t border-gray-800">
-                  <h4 className="text-sm font-medium text-gray-300 mb-3">
-                    Predictions
-                  </h4>
-                  <div className="space-y-2">
-                    <PredictButton type="temperature" region={selectedRegion} />
-                    <PredictButton type="air-quality" region={selectedRegion} />
-                    <PredictButton type="flood" region={selectedRegion} />
-                  </div>
-                </div>
+
               </div>
             ) : (
               <div className="text-center text-gray-500 mt-20">

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { MapContainer, TileLayer, Popup, Marker, useMapEvents, Rectangle, GeoJSON } from 'react-leaflet'
+import { MapContainer, TileLayer, Popup, Marker, useMapEvents, Rectangle, GeoJSON, Circle, ZoomControl } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Feature, FeatureCollection, Geometry, GeoJsonObject } from 'geojson'
@@ -77,12 +77,15 @@ const getFeatureCountryName = (feature?: Feature): string | undefined => {
 const sanitizeFeatureCollection = (input: Feature | FeatureCollection | null): FeatureCollection | null => {
   if (!input) return null
 
+  const isPolygonOrMultiPolygon = (feature: Feature) =>
+    feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')
+
   if (input.type === 'FeatureCollection') {
-    const polygonFeatures = input.features.filter((feature) => feature.geometry && feature.geometry.type !== 'Point')
+    const polygonFeatures = input.features.filter(isPolygonOrMultiPolygon)
     return polygonFeatures.length ? { type: 'FeatureCollection', features: polygonFeatures } : null
   }
 
-  if (input.geometry && input.geometry.type !== 'Point') {
+  if (isPolygonOrMultiPolygon(input)) {
     return { type: 'FeatureCollection', features: [input] }
   }
 
@@ -212,13 +215,7 @@ interface MapComponentProps {
 }
 
 
-// Custom marker icon
-const customIcon = new L.Icon({
-  iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSIjMzMzIj48cGF0aCBkPSJNMTIgMEM5LjI0IDAgNyAyLjI0IDcgNWMwIDIuODUgMi45MiA3LjIxIDUgOS44OCAyLjExLTIuNjkgNS03IDUtOS44OCAwLTIuNzYtMi4yNC01LTUtNXptMCA3Yy0xLjEgMC0yLS45LTItMnMuOS0yIDItMiAyIC45IDIgMi0uOSAyLTIgMnoiLz48L3N2Zz4=',
-  iconSize: [30, 30],
-  iconAnchor: [15, 30],
-  popupAnchor: [0, -30],
-})
+
 
 function MapEventHandler({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) {
   useMapEvents({
@@ -322,6 +319,13 @@ export default function MapComponent({
   activeOverlay,
   onOverlayStateChange,
 }: MapComponentProps) {
+  const customIcon = new L.Icon({
+    iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSIjMzMzIj48cGF0aCBkPSJNMTIgMEM5LjI0IDAgNyAyLjI0IDcgNWMwIDIuODUgMi45MiA3LjIxIDUgOS44OCAyLjExLTIuNjkgNS03IDUtOS44OCAwLTIuNzYtMi4yNC01LTUtNXptMCA3Yy0xLjEgMC0yLS45LTItMnMuOS0yIDItMiAyIC45IDIgMi0uOSAyLTIgMnoiLz48L3N2Zz4=',
+    iconSize: [30, 30],
+    iconAnchor: [15, 30],
+    popupAnchor: [0, -30],
+  })
+
   const [mounted, setMounted] = useState(false)
   const [mapId] = useState(() => `map-${Math.random().toString(36).substr(2, 9)}`)
   const [clickedLocation, setClickedLocation] = useState<RegionData | null>(null)
@@ -336,6 +340,47 @@ export default function MapComponent({
   const [isPlanningPanelCollapsed, setIsPlanningPanelCollapsed] = useState(false)
   const [selectedCountryGeometry, setSelectedCountryGeometry] = useState<Feature | FeatureCollection | null>(null)
   const [overlayMetrics, setOverlayMetrics] = useState<{ temperature: number; airQuality: number; floodRisk: number } | null>(null)
+  const [highlightCircle, setHighlightCircle] = useState<{ center: [number, number]; radius: number } | null>(null)
+  const [waterGeometry, setWaterGeometry] = useState<FeatureCollection | null>(null)
+
+  const fetchWaterGeometry = useCallback(async (bounds: [number, number, number, number]) => {
+    const [south, west, north, east] = bounds
+    const bbox = `${south},${west},${north},${east}`
+    const query = `
+      [out:geojson][timeout:30];
+      (
+        nwr["natural"="water"](${bbox});
+        nwr["waterway"="riverbank"](${bbox});
+      );
+      out geom;
+    `
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    try {
+      const response = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`)
+      if (!response.ok) {
+        throw new Error(`Overpass API request failed: ${response.statusText}`)
+      }
+      const data = await response.json()
+      if (data.features && data.features.length > 0) {
+        const polygonFeatures = data.features.filter(
+          (feature: Feature) =>
+            feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')
+        )
+        if (polygonFeatures.length > 0) {
+          setWaterGeometry({ type: 'FeatureCollection', features: polygonFeatures })
+        } else {
+          setWaterGeometry(null)
+        }
+      } else {
+        setWaterGeometry(null)
+      }
+    } catch (error) {
+      console.error('Failed to fetch water geometry:', error)
+      setWaterGeometry(null)
+    }
+  }, [])
 
   const applyRegionGeometry = useCallback((
     {
@@ -356,6 +401,9 @@ export default function MapComponent({
       sanitized = buildBoundsFeatureCollection(bounds, properties)
     }
 
+    if (sanitized) {
+      setHighlightCircle(null)
+    }
     setSelectedCountryGeometry(sanitized)
 
     if (!sanitized || !map || !fitBounds) {
@@ -417,14 +465,14 @@ export default function MapComponent({
   }, [applyRegionGeometry])
 
   const fetchCountryGeometry = useCallback(async (lat: number, lng: number, options: GeometryFetchOptions = {}): Promise<GeometryFetchResult> => {
-    const zoomLevels = [6, 5, 4, 3]
+    const zoomLevels = [14, 12, 10, 8] // Start from neighborhood, up to county level
     let countryName: string | undefined
     let lastBounds = options.fallbackBounds
 
     for (const zoom of zoomLevels) {
       let boundsFromResponse: [number, number, number, number] | undefined
       try {
-        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=geojson&polygon_geojson=1&zoom=${zoom}&lat=${lat}&lon=${lng}`)
+        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=geojson&polygon_geojson=1&extratags=1&zoom=${zoom}&lat=${lat}&lon=${lng}`)
         if (!response.ok) {
           throw new Error('Reverse geocoding failed')
         }
@@ -449,16 +497,7 @@ export default function MapComponent({
           return { success: true, countryName, bounds: boundsFromResponse }
         }
 
-        if (boundsFromResponse) {
-          const applied = applyRegionGeometry({
-            bounds: boundsFromResponse,
-            properties: selectionProperties,
-            fitBounds: options.fitBounds,
-          })
-          if (applied) {
-            return { success: true, countryName, bounds: boundsFromResponse }
-          }
-        }
+
       } catch (error) {
         console.error(`Failed reverse geocoding at zoom ${zoom}:`, error)
       }
@@ -542,6 +581,7 @@ export default function MapComponent({
 
     setIsGeneratingGrid(true)
     console.log(`Analyzing region: ${locationName}`)
+    setWaterGeometry(null)
 
     try {
       // Geocode the location
@@ -599,6 +639,11 @@ export default function MapComponent({
           if (geometryResult.countryName) {
             geometryCountryName = geometryResult.countryName
           }
+          if (geometryResult.bounds) {
+            fetchWaterGeometry(geometryResult.bounds)
+          }
+        } else {
+          fetchWaterGeometry(fallbackBounds)
         }
       } else {
         const geometryResult = await fetchCountryGeometry(lat, lng, {
@@ -608,6 +653,9 @@ export default function MapComponent({
         })
         if (geometryResult.countryName) {
           geometryCountryName = geometryResult.countryName
+        }
+        if (geometryResult.bounds) {
+          fetchWaterGeometry(geometryResult.bounds)
         }
       }
 
@@ -941,11 +989,24 @@ export default function MapComponent({
       setApiData(null)
       setOverlayMetrics(null)
       setSelectedCountryGeometry(null)
+      setHighlightCircle(null)
+      setWaterGeometry(null)
 
       const geometryResult = await fetchCountryGeometry(searchResult.lat, searchResult.lng, {
         fitBounds: true,
         properties: { name: searchResult.name },
       })
+
+      if (geometryResult.bounds) {
+        fetchWaterGeometry(geometryResult.bounds)
+      }
+
+      if (!geometryResult.success) {
+        const zoom = map.getZoom()
+        const radius = zoom > 12 ? 1000 : zoom > 8 ? 4000 : 10000 // 1km, 4km, 10km
+        setHighlightCircle({ center: [searchResult.lat, searchResult.lng], radius: radius })
+      }
+
       if (geometryResult.countryName) {
         const resolvedName = geometryResult.countryName ?? regionData.name
         regionData = { ...regionData, name: resolvedName }
@@ -978,7 +1039,7 @@ export default function MapComponent({
     }
 
     run()
-  }, [searchResult, map, fetchCountryGeometry, fetchApiData])
+  }, [searchResult, map, fetchCountryGeometry, fetchApiData, fetchWaterGeometry])
 
   const handleMapClick = async (lat: number, lng: number) => {
     // Normalize coordinates to valid ranges
@@ -991,6 +1052,8 @@ export default function MapComponent({
 
     // Create region data for clicked location
     setSelectedCountryGeometry(null)
+    setHighlightCircle(null)
+    setWaterGeometry(null)
 
     let regionData: RegionData = {
       name: `Location (${normalizedLat.toFixed(4)}, ${normalizedLng.toFixed(4)})`,
@@ -1010,6 +1073,17 @@ export default function MapComponent({
       fitBounds: true,
       properties: { name: regionData.name },
     })
+
+    if (geometryResult.bounds) {
+      fetchWaterGeometry(geometryResult.bounds)
+    }
+
+    if (!geometryResult.success) {
+      if (!map) return
+      const zoom = map.getZoom()
+      const radius = zoom > 12 ? 1000 : zoom > 8 ? 4000 : 10000 // 1km, 4km, 10km
+      setHighlightCircle({ center: [normalizedLat, normalizedLng], radius: radius })
+    }
     if (geometryResult.countryName) {
       const resolvedName = geometryResult.countryName ?? regionData.name
       regionData = { ...regionData, name: resolvedName }
@@ -1279,17 +1353,17 @@ export default function MapComponent({
 
       <MapContainer
         key={mapId}
-        center={[40.7128, -74.006]} // New York City, USA
+        center={[-6.2088, 106.8456]} // Jakarta, Indonesia
         zoom={10}
         minZoom={3}
-        maxZoom={16} // Reduced from 18 to limit excessive zooming
+        maxZoom={18} // Allow over-zooming up to level 18
         maxBounds={[
           [-90, -180],  // Southwest coordinates
           [90, 180]     // Northeast coordinates
         ]}
         maxBoundsViscosity={0.5}
         className="h-full w-full"
-        zoomControl={true}
+        zoomControl={false}
         scrollWheelZoom={true}
         ref={(mapInstance) => {
           if (mapInstance) {
@@ -1297,22 +1371,51 @@ export default function MapComponent({
           }
         }}
       >
+        <ZoomControl position="bottomright" />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          maxZoom={16} // Tiles are only available up to zoom 16
         />
 
-        {selectedCountryGeometry && overlayFillColor && activeOverlay !== 'none' && (
+        {selectedCountryGeometry && activeOverlay !== 'none' && (
           <GeoJSON
             key={`${activeOverlay}-${overlayFillColor}`}
             data={selectedCountryGeometry as unknown as GeoJsonObject}
             style={() => ({
               color: '#ffffff',
               weight: 1,
-              fillColor: overlayFillColor,
+              fillColor: overlayFillColor || '#0000ff',
               fillOpacity: 0.55,
               opacity: 0.8,
             })}
+          />
+        )}
+
+        {waterGeometry && (
+          <GeoJSON
+            key="water-mask"
+            data={waterGeometry as unknown as GeoJsonObject}
+            pane="markerPane"
+            style={() => ({
+              fillColor: '#1a293b',
+              color: 'transparent',
+              fillOpacity: 1,
+            })}
+          />
+        )}
+
+        {highlightCircle && activeOverlay !== 'none' && (
+          <Circle
+            center={highlightCircle.center}
+            radius={highlightCircle.radius}
+            pathOptions={{
+              color: '#ffffff',
+              weight: 1,
+              fillColor: overlayFillColor || '#0000ff',
+              fillOpacity: 0.55,
+              opacity: 0.8,
+            }}
           />
         )}
 
@@ -1468,7 +1571,7 @@ export default function MapComponent({
                 </div>
 
                 <div className="border-t pt-2 mt-3 text-xs text-gray-500 italic text-center">
-                  Grid Position: Row {cell.gridRow + 1}, Column {cell.gridCol + 1}<br/>
+                  Grid Position: Row {cell.gridRow + 1}, Column {cell.gridCol + 1}<br />
                   Data: NASA GIBS • POWER • Real-time satellite observations
                 </div>
               </div>
@@ -1489,7 +1592,7 @@ export default function MapComponent({
               }
             }}
           >
-            {/* <Popup autoClose={false} closeOnClick={false}>
+            <Popup autoClose={false} closeOnClick={false}>
               <div className="p-3 min-w-[200px]">
                 <h3 className="font-semibold text-sm mb-3 text-gray-800 border-b pb-2">
                   {clickedLocation.name}
@@ -1567,7 +1670,7 @@ export default function MapComponent({
                   </p>
                 </div>
               </div>
-            </Popup> */}
+            </Popup>
           </Marker>
         )}
       </MapContainer>

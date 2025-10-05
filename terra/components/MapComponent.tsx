@@ -489,12 +489,20 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
 
       setClickedLocation(regionData)
       setApiData(null)
-      onRegionSelect(regionData)
-      fetchApiData(searchResult.lat, searchResult.lng)
+
+      // Fetch API data and update region
+      fetchApiData(searchResult.lat, searchResult.lng).then((apiResults) => {
+        if (apiResults) {
+          regionData.temperature = apiResults.temperature
+          regionData.airQuality = apiResults.airQuality
+          regionData.floodRisk = apiResults.floodRisk
+        }
+        onRegionSelect(regionData)
+      })
     }
   }, [searchResult, map])
 
-  const fetchApiData = async (lat: number, lng: number) => {
+  const fetchApiData = async (lat: number, lng: number): Promise<ApiData | null> => {
     setIsLoadingApi(true)
     console.log('🗺️ Fetching API data for popup:', { lat, lng })
 
@@ -527,15 +535,17 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
       console.log('✅ API data fetched for popup:', { tempData, aqData, floodData })
 
       const apiResults: ApiData = {
-        temperature: tempData.data?.currentTemp,
-        airQuality: tempData.data?.currentAQI || aqData.data?.currentAQI,
-        floodRisk: floodData.data?.overallRisk,
+        temperature: tempData.data?.currentTemp || 0,
+        airQuality: tempData.data?.currentAQI || aqData.data?.currentAQI || 0,
+        floodRisk: floodData.data?.overallRisk || 0,
       }
 
       setApiData(apiResults)
+      return apiResults
     } catch (error) {
       console.error('❌ Error fetching API data for popup:', error)
       setApiData(null)
+      return null
     } finally {
       setIsLoadingApi(false)
     }
@@ -565,9 +575,16 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
     setApiData(null) // Reset previous API data
 
     // Fetch API data with normalized coordinates
-    await fetchApiData(normalizedLat, normalizedLng)
+    const apiResults = await fetchApiData(normalizedLat, normalizedLng)
 
-    // Update sidebar
+    // Update region data with API results if available
+    if (apiResults) {
+      regionData.temperature = apiResults.temperature
+      regionData.airQuality = apiResults.airQuality
+      regionData.floodRisk = apiResults.floodRisk
+    }
+
+    // Update sidebar with complete data
     onRegionSelect(regionData)
   }
 

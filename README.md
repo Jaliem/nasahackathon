@@ -1,6 +1,19 @@
 # Terra - Climate & Environmental Monitoring Platform
 
-A professional climate and environmental monitoring platform designed for government agencies and policy makers. Terra provides real-time environmental data visualization, risk assessment, and AI-powered analysis to support evidence-based decision making.
+An urban planning platform that leverages NASA Earth observation data to help city planners develop sustainable growth strategies. Terra provides environmental risk assessment, climate data visualization, and AI-powered insights to balance urban expansion with public wellbeing and environmental preservation.
+
+## NASA Space Apps Challenge
+
+**Challenge**: Demonstrate how an urban planner can use NASA Earth observation data to develop smart strategies for city growth that maintain both the wellbeing of people and the environment.
+
+Terra addresses this challenge by providing urban planners with comprehensive environmental monitoring tools that leverage NASA Earth observation data. The platform enables data-driven decision making for sustainable urban development by:
+
+- **Environmental Impact Assessment**: Real-time monitoring of temperature, air quality, and flood risks to identify areas suitable for development
+- **Risk-Based Planning**: 7-day forecasts and historical trends to anticipate environmental challenges
+- **Data-Driven Insights**: AI-powered analysis to recommend sustainable growth strategies
+- **Evidence-Based Policy**: Professional-grade data visualization for stakeholder presentations and policy development
+
+By integrating NASA POWER climate data, real-time environmental metrics, and geospatial analysis, Terra empowers urban planners to balance city expansion with environmental preservation and public health.
 
 ## Features
 
@@ -197,11 +210,7 @@ All API routes throw errors when external services are unavailable instead of us
 
 ## Contributing
 
-This project was developed for NASA Space Apps Challenge 2024.
-
-## License
-
-[Add your license here]
+This project was developed for NASA Space Apps Challenge 2025.
 
 ## Acknowledgments
 

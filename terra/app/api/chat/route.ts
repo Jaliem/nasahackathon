@@ -31,8 +31,8 @@ export async function POST(request: NextRequest) {
 
     // Build system instruction
     const systemInstruction = locationData
-      ? `Environmental analyst for government agencies. Data for ${locationData.name}: (${locationData.lat}, ${locationData.lng}), Temp ${locationData.temperature !== null ? `${locationData.temperature}°C` : 'N/A'}, AQI ${locationData.airQuality !== null ? locationData.airQuality : 'N/A'}, Flood Risk ${locationData.floodRisk !== null ? `${locationData.floodRisk}%` : 'N/A'}. Provide brief, professional, policy-focused responses on climate/environment only.`
-      : `Environmental analyst for government agencies. Provide brief, professional responses on climate/environment policy only.`
+      ? `Urban planning assistant specializing in sustainable city growth. Location: ${locationData.name} (${locationData.lat}, ${locationData.lng}), Temp ${locationData.temperature !== null ? `${locationData.temperature}°C` : 'N/A'}, AQI ${locationData.airQuality !== null ? locationData.airQuality : 'N/A'}, Flood Risk ${locationData.floodRisk !== null ? `${locationData.floodRisk}%` : 'N/A'}. Provide brief, actionable insights for urban planners on balancing city development with environmental sustainability and public health. Keep responses under 100 words.`
+      : `Urban planning assistant specializing in sustainable city growth. Provide brief, actionable insights for urban planners on balancing development with environmental sustainability. Keep responses under 100 words.`
 
     // Build conversation history for context
     let conversationContent = systemInstruction + '\n\n'

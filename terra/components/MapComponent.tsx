@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { MapContainer, TileLayer, Popup, Marker, useMapEvents, useMap, Rectangle, GeoJSON } from 'react-leaflet'
+import { MapContainer, TileLayer, Popup, Marker, useMapEvents, Rectangle, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Feature, FeatureCollection, Geometry, GeoJsonObject } from 'geojson'
@@ -45,11 +45,34 @@ const combinedRiskSeverityColor = (riskScore: number) => {
   return SEVERITY_COLORS.critical
 }
 
+type GeometryFetchResult = {
+  success: boolean
+  countryName?: string
+  bounds?: [number, number, number, number]
+}
+
+type GeometryFetchOptions = {
+  fitBounds?: boolean
+  fallbackBounds?: [number, number, number, number]
+  properties?: Record<string, unknown>
+}
+
 const buildFeatureFromGeometry = (geometry: Geometry, properties: Record<string, unknown> = {}): Feature => ({
   type: 'Feature',
   properties,
   geometry,
 })
+
+const getFeatureCountryName = (feature?: Feature): string | undefined => {
+  if (!feature || !feature.properties) return undefined
+  const props = feature.properties as Record<string, unknown>
+  const address = props.address as Record<string, unknown> | undefined
+  return (
+    (address?.country as string | undefined) ||
+    (props.display_name as string | undefined) ||
+    (props.name as string | undefined)
+  )
+}
 
 const sanitizeFeatureCollection = (input: Feature | FeatureCollection | null): FeatureCollection | null => {
   if (!input) return null
@@ -66,18 +89,126 @@ const sanitizeFeatureCollection = (input: Feature | FeatureCollection | null): F
   return null
 }
 
+const parseGeoJsonResponse = (input: Feature | FeatureCollection | null) => {
+  const sanitized = sanitizeFeatureCollection(input)
+
+  if (!input) {
+    return { sanitized, countryName: undefined as string | undefined }
+  }
+
+  if (input.type === 'FeatureCollection') {
+    const firstFeature = input.features.find((feature) => feature.properties)
+    return { sanitized, countryName: getFeatureCountryName(firstFeature) }
+  }
+
+  return { sanitized, countryName: getFeatureCountryName(input) }
+}
+
+const buildBoundsFeatureCollection = (
+  bounds: [number, number, number, number],
+  properties: Record<string, unknown> = {}
+): FeatureCollection => {
+  const [south, west, north, east] = bounds
+  const coordinates = [
+    [
+      [west, south],
+      [east, south],
+      [east, north],
+      [west, north],
+      [west, south],
+    ],
+  ]
+
+  return {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties,
+        geometry: {
+          type: 'Polygon',
+          coordinates,
+        },
+      },
+    ],
+  }
+}
+
+const extractBoundsFromResponse = (data: unknown): [number, number, number, number] | undefined => {
+  if (!data) return undefined
+
+  const parseNumericArray = (bbox?: unknown): number[] | undefined => {
+    if (!bbox || !Array.isArray(bbox) || bbox.length !== 4) return undefined
+    const parsed = bbox.map((value) => Number(value))
+    if (parsed.some((value) => Number.isNaN(value))) return undefined
+    return parsed
+  }
+
+  const parseGeoJsonBbox = (bbox?: unknown): [number, number, number, number] | undefined => {
+    const parsed = parseNumericArray(bbox)
+    if (!parsed) return undefined
+    const [minLon, minLat, maxLon, maxLat] = parsed
+    return [minLat, minLon, maxLat, maxLon]
+  }
+
+  const parseNominatimBbox = (bbox?: unknown): [number, number, number, number] | undefined => {
+    const parsed = parseNumericArray(bbox)
+    if (!parsed) return undefined
+    const [south, north, west, east] = parsed
+    return [south, west, north, east]
+  }
+
+  if (typeof (data as { bbox?: unknown }).bbox !== 'undefined') {
+    const bounds = parseGeoJsonBbox((data as { bbox?: unknown }).bbox)
+    if (bounds) return bounds
+  }
+
+  if (typeof (data as { boundingbox?: unknown }).boundingbox !== 'undefined') {
+    const bounds = parseNominatimBbox((data as { boundingbox?: unknown }).boundingbox)
+    if (bounds) return bounds
+  }
+
+  if ((data as FeatureCollection).type === 'FeatureCollection' && Array.isArray((data as FeatureCollection).features)) {
+    for (const feature of (data as FeatureCollection).features) {
+      const bounds = extractBoundsFromResponse(feature)
+      if (bounds) return bounds
+    }
+  }
+
+  if ((data as Feature).type === 'Feature') {
+    const feature = data as Feature & { bbox?: unknown; properties?: Record<string, unknown> }
+    if (feature.bbox) {
+      const bounds = parseGeoJsonBbox(feature.bbox)
+      if (bounds) return bounds
+    }
+    if (feature.properties && (feature.properties as { boundingbox?: unknown }).boundingbox) {
+      const bounds = parseNominatimBbox((feature.properties as { boundingbox?: unknown }).boundingbox)
+      if (bounds) return bounds
+    }
+  }
+
+  return undefined
+}
+
 export interface RegionData {
   name: string
-  temperature: number
-  airQuality: number
-  floodRisk: number
-  lat: number
-  lng: number
+  temperature: number  
+  airQuality: number 
+  floodRisk: number 
+  lat: number 
+  lng: number 
 }
+
+export type OverlayType = 'none' | 'temperature' | 'air-quality' | 'flood' | 'combined'
 
 interface MapComponentProps {
   onRegionSelect: (region: RegionData) => void
   searchResult?: { lat: number; lng: number; name: string } | null
+  activeOverlay: OverlayType
+  onOverlayStateChange?: (state: {
+    hasGeometry: boolean
+    overlayMetrics: { temperature: number; airQuality: number; floodRisk: number } | null
+  }) => void
 }
 
 
@@ -142,9 +273,9 @@ function getGridColor(habitability: UrbanPlanningGrid['habitability']): string {
 }
 
 interface ApiData {
-  temperature?: number
-  airQuality?: number
-  floodRisk?: number
+  temperature: number
+  airQuality: number
+  floodRisk: number
 }
 
 interface WaqiStation {
@@ -185,7 +316,12 @@ interface UrbanPlanningGrid {
   gridCol: number
 }
 
-export default function MapComponent({ onRegionSelect, searchResult = null }: MapComponentProps) {
+export default function MapComponent({
+  onRegionSelect,
+  searchResult = null,
+  activeOverlay,
+  onOverlayStateChange,
+}: MapComponentProps) {
   const [mounted, setMounted] = useState(false)
   const [mapId] = useState(() => `map-${Math.random().toString(36).substr(2, 9)}`)
   const [clickedLocation, setClickedLocation] = useState<RegionData | null>(null)
@@ -197,54 +333,162 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
   const [analysisMode, setAnalysisMode] = useState<'grid' | 'region'>('region')
   const [selectedLocation, setSelectedLocation] = useState('')
   const [regionData, setRegionData] = useState<UrbanPlanningGrid | null>(null)
-  const [activeOverlay, setActiveOverlay] = useState<'none' | 'temperature' | 'air-quality' | 'flood' | 'combined'>('temperature')
   const [isPlanningPanelCollapsed, setIsPlanningPanelCollapsed] = useState(false)
   const [selectedCountryGeometry, setSelectedCountryGeometry] = useState<Feature | FeatureCollection | null>(null)
   const [overlayMetrics, setOverlayMetrics] = useState<{ temperature: number; airQuality: number; floodRisk: number } | null>(null)
 
-  const updateSelectedGeometry = useCallback((geometry: Feature | FeatureCollection | null, options: { fitBounds?: boolean } = {}) => {
-    const sanitized = sanitizeFeatureCollection(geometry)
+  const applyRegionGeometry = useCallback((
+    {
+      geometry = null,
+      bounds,
+      properties = {},
+      fitBounds = false,
+    }: {
+      geometry?: Feature | FeatureCollection | null
+      bounds?: [number, number, number, number]
+      properties?: Record<string, unknown>
+      fitBounds?: boolean
+    }
+  ): boolean => {
+    let sanitized = sanitizeFeatureCollection(geometry)
+
+    if (!sanitized && bounds) {
+      sanitized = buildBoundsFeatureCollection(bounds, properties)
+    }
+
     setSelectedCountryGeometry(sanitized)
 
-    if (!sanitized || !map || !options.fitBounds) {
-      return
+    if (!sanitized || !map || !fitBounds) {
+      return Boolean(sanitized)
     }
 
     try {
       const geoLayer = L.geoJSON(sanitized as unknown as GeoJsonObject)
-      const bounds = geoLayer.getBounds()
-      if (bounds.isValid()) {
-        map.fitBounds(bounds, { padding: [32, 32] })
+      const geoBounds = geoLayer.getBounds()
+      if (geoBounds.isValid()) {
+        map.fitBounds(geoBounds, { padding: [32, 32] })
       }
     } catch (error) {
-      console.error('❌ Failed to focus on selected geometry:', error)
+      console.error('Failed to focus on selected geometry:', error)
     }
+
+    return Boolean(sanitized)
   }, [map])
 
-  const fetchCountryGeometry = useCallback(async (lat: number, lng: number, options: { fitBounds?: boolean } = {}) => {
+  const fetchGeometryByName = useCallback(async (countryName: string | undefined, options: GeometryFetchOptions = {}): Promise<GeometryFetchResult> => {
+    if (!countryName) return { success: false }
+
     try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=geojson&polygon_geojson=1&zoom=5&lat=${lat}&lon=${lng}`)
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=geojson&polygon_geojson=1&limit=1&q=${encodeURIComponent(countryName)}`)
       if (!response.ok) {
-        throw new Error('Reverse geocoding failed')
+        throw new Error('Country search failed')
       }
 
       const data = await response.json()
-      if (!data || data.type !== 'FeatureCollection') {
-        return
+      const { sanitized } = parseGeoJsonResponse(data as FeatureCollection)
+      const boundsFromResponse = extractBoundsFromResponse(data) ?? options.fallbackBounds
+      const selectionProperties = options.properties ?? { name: countryName }
+
+      if (sanitized) {
+        applyRegionGeometry({
+          geometry: sanitized,
+          bounds: boundsFromResponse,
+          properties: selectionProperties,
+          fitBounds: options.fitBounds,
+        })
+        return { success: true, countryName, bounds: boundsFromResponse }
       }
 
-      const polygonFeatures = data.features?.filter((feature: Feature) => feature.geometry && feature.geometry.type !== 'Point')
-      if (polygonFeatures && polygonFeatures.length > 0) {
-        const featureCollection: FeatureCollection = {
-          type: 'FeatureCollection',
-          features: polygonFeatures,
+      if (boundsFromResponse) {
+        const applied = applyRegionGeometry({
+          bounds: boundsFromResponse,
+          properties: selectionProperties,
+          fitBounds: options.fitBounds,
+        })
+        if (applied) {
+          return { success: true, countryName, bounds: boundsFromResponse }
         }
-        updateSelectedGeometry(featureCollection, options)
       }
     } catch (error) {
-      console.error('❌ Failed to fetch country geometry:', error)
+      console.error('Failed to fetch geometry by name:', error)
     }
-  }, [updateSelectedGeometry])
+
+    return { success: false, countryName, bounds: options.fallbackBounds }
+  }, [applyRegionGeometry])
+
+  const fetchCountryGeometry = useCallback(async (lat: number, lng: number, options: GeometryFetchOptions = {}): Promise<GeometryFetchResult> => {
+    const zoomLevels = [6, 5, 4, 3]
+    let countryName: string | undefined
+    let lastBounds = options.fallbackBounds
+
+    for (const zoom of zoomLevels) {
+      let boundsFromResponse: [number, number, number, number] | undefined
+      try {
+        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=geojson&polygon_geojson=1&zoom=${zoom}&lat=${lat}&lon=${lng}`)
+        if (!response.ok) {
+          throw new Error('Reverse geocoding failed')
+        }
+
+        const data = await response.json()
+        const { sanitized, countryName: extractedName } = parseGeoJsonResponse(data as FeatureCollection)
+        boundsFromResponse = extractBoundsFromResponse(data) ?? lastBounds
+        countryName = countryName || extractedName
+
+        const selectionProperties = {
+          ...(options.properties || {}),
+          ...(countryName ? { name: countryName } : {}),
+        }
+
+        if (sanitized) {
+          applyRegionGeometry({
+            geometry: sanitized,
+            bounds: boundsFromResponse,
+            properties: selectionProperties,
+            fitBounds: options.fitBounds,
+          })
+          return { success: true, countryName, bounds: boundsFromResponse }
+        }
+
+        if (boundsFromResponse) {
+          const applied = applyRegionGeometry({
+            bounds: boundsFromResponse,
+            properties: selectionProperties,
+            fitBounds: options.fitBounds,
+          })
+          if (applied) {
+            return { success: true, countryName, bounds: boundsFromResponse }
+          }
+        }
+      } catch (error) {
+        console.error(`Failed reverse geocoding at zoom ${zoom}:`, error)
+      }
+      lastBounds = boundsFromResponse ?? lastBounds
+    }
+
+    if (!countryName) {
+      try {
+        const fallbackResponse = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=3&lat=${lat}&lon=${lng}`)
+        if (fallbackResponse.ok) {
+          const fallbackData = await fallbackResponse.json()
+          countryName = (fallbackData?.address?.country as string | undefined) || (fallbackData?.display_name as string | undefined)
+        }
+      } catch (error) {
+        console.error('Failed to fetch fallback reverse geocode:', error)
+      }
+    }
+
+    const nameResult = await fetchGeometryByName(countryName, {
+      fitBounds: options.fitBounds,
+      fallbackBounds: options.fallbackBounds ?? lastBounds,
+      properties: options.properties,
+    })
+
+    return {
+      success: nameResult.success,
+      countryName: nameResult.countryName || countryName,
+      bounds: nameResult.bounds ?? options.fallbackBounds ?? lastBounds,
+    }
+  }, [fetchGeometryByName, applyRegionGeometry])
 
   useEffect(() => {
     setMounted(true)
@@ -297,7 +541,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
     if (!map) return
 
     setIsGeneratingGrid(true)
-    console.log(`🌍 Analyzing region: ${locationName}`)
+    console.log(`Analyzing region: ${locationName}`)
 
     try {
       // Geocode the location
@@ -309,7 +553,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
       const geoData = await geoResponse.json()
 
       if (!geoData || geoData.length === 0) {
-        console.error('❌ Location not found')
+        console.error('Location not found')
         setIsGeneratingGrid(false)
         return
       }
@@ -324,11 +568,47 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
       // Fly to location
       map.flyTo([lat, lng], 12, { duration: 1.5 })
 
-      const featureFromSearch = location.geojson ? buildFeatureFromGeometry(location.geojson as Geometry, { name: location.display_name }) : null
+      setSelectedCountryGeometry(null)
+
+      const south = parseFloat(boundingBox[0])
+      const north = parseFloat(boundingBox[1])
+      const west = parseFloat(boundingBox[2])
+      const east = parseFloat(boundingBox[3])
+      const fallbackBounds: [number, number, number, number] = [south, west, north, east]
+
+      const featureFromSearch = location.geojson
+        ? buildFeatureFromGeometry(location.geojson as Geometry, { name: location.display_name })
+        : null
+      let geometryCountryName: string | undefined = location.display_name
+
       if (featureFromSearch) {
-        updateSelectedGeometry(featureFromSearch, { fitBounds: true })
+        const applied = applyRegionGeometry({
+          geometry: featureFromSearch,
+          bounds: fallbackBounds,
+          properties: { name: location.display_name },
+          fitBounds: true,
+        })
+
+        if (!applied) {
+          const geometryResult = await fetchCountryGeometry(lat, lng, {
+            fitBounds: true,
+            fallbackBounds,
+            properties: { name: location.display_name },
+          })
+
+          if (geometryResult.countryName) {
+            geometryCountryName = geometryResult.countryName
+          }
+        }
       } else {
-        fetchCountryGeometry(lat, lng, { fitBounds: true })
+        const geometryResult = await fetchCountryGeometry(lat, lng, {
+          fitBounds: true,
+          fallbackBounds,
+          properties: { name: location.display_name },
+        })
+        if (geometryResult.countryName) {
+          geometryCountryName = geometryResult.countryName
+        }
       }
 
       // Fetch data for the center point of the region
@@ -364,10 +644,6 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
       const habitability = getHabitability(riskScore)
 
       // Calculate approximate area
-      const south = parseFloat(boundingBox[0])
-      const north = parseFloat(boundingBox[1])
-      const west = parseFloat(boundingBox[2])
-      const east = parseFloat(boundingBox[3])
       const latRange = north - south
       const lngRange = east - west
       const areaKm2 = (latRange * 111) * (lngRange * 111 * Math.cos(lat * Math.PI / 180))
@@ -388,7 +664,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
         area,
         population,
         developmentType,
-        name: location.display_name,
+        name: geometryCountryName || location.display_name,
         gridRow: 0,
         gridCol: 0,
       }
@@ -400,10 +676,10 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
         airQuality: regionAnalysis.airQuality,
         floodRisk: regionAnalysis.floodRisk,
       })
-      console.log(`✅ Region analysis complete for ${locationName}`)
+      console.log(`Region analysis complete for ${locationName}`)
 
     } catch (error) {
-      console.error('❌ Error analyzing region:', error)
+      console.error('Error analyzing region:', error)
     } finally {
       setIsGeneratingGrid(false)
     }
@@ -417,19 +693,19 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
     
     // Grid requires higher zoom for meaningful analysis
     if (zoom < 12) {
-      console.log('⚠️ Zoom in more to generate development grid (current zoom:', zoom, ', need: 12+)')
+      console.log('Zoom in more to generate development grid (current zoom:', zoom, ', need: 12+)')
       setUrbanPlanningGrid([])
       return
     }
 
     // Prevent multiple simultaneous requests
     if (isGeneratingGrid) {
-      console.log('⏳ Already generating grid, skipping...')
+      console.log('Already generating grid, skipping...')
       return
     }
 
     setIsGeneratingGrid(true)
-    console.log('🏗️ Generating urban planning development grid...')
+    console.log('Generating urban planning development grid...')
 
     const bounds = map.getBounds()
     const center = bounds.getCenter()
@@ -457,7 +733,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
     const totalCells = numLatCells * numLngCells
 
     if (totalCells > maxCells) {
-      console.log(`⚠️ Too many cells (${totalCells}), zoom in more or reduce area. Maximum: ${maxCells} cells`)
+      console.log(`Too many cells (${totalCells}), zoom in more or reduce area. Maximum: ${maxCells} cells`)
       setIsGeneratingGrid(false)
       return
     }
@@ -465,7 +741,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
     // Calculate cell area in square kilometers
     const cellAreaKm2 = cellSizeKm * cellSizeKm
 
-    console.log(`🗺️ Creating ${numLatCells}x${numLngCells} development grid (${totalCells} cells of ${cellSizeKm}km², ${totalCells * 3} API calls)...`)
+    console.log(`Creating ${numLatCells}x${numLngCells} development grid (${totalCells} cells of ${cellSizeKm}km², ${totalCells * 3} API calls)...`)
 
     const gridCells: UrbanPlanningGrid[] = []
 
@@ -547,7 +823,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
             })
 
           } catch (fetchError) {
-            console.warn(`⚠️ Failed to fetch data for grid cell [${row},${col}]:`, fetchError)
+            console.warn(`Failed to fetch data for grid cell [${row},${col}]:`, fetchError)
             // Create cell with default values
             gridCells.push({
               id: `grid-${row}-${col}`,
@@ -575,10 +851,10 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
         }
       }
 
-      console.log(`✅ Generated ${gridCells.length} grid cells for development analysis`)
+      console.log(`Generated ${gridCells.length} grid cells for development analysis`)
       setUrbanPlanningGrid(gridCells)
     } catch (error) {
-      console.error('❌ Error generating urban planning grid:', error)
+      console.error('Error generating urban planning grid:', error)
       setUrbanPlanningGrid([])
     } finally {
       setIsGeneratingGrid(false)
@@ -594,46 +870,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
   }, [analysisMode])
 
   // Handle search result
-  useEffect(() => {
-    if (searchResult && map) {
-      console.log('🔍 Navigating to:', searchResult.name)
-      map.flyTo([searchResult.lat, searchResult.lng], 10, {
-        duration: 1.5
-      })
-
-      const regionData: RegionData = {
-        name: searchResult.name,
-        lat: searchResult.lat,
-        lng: searchResult.lng,
-        temperature: 0,
-        airQuality: 0,
-        floodRisk: 0,
-      }
-
-      setClickedLocation(regionData)
-      setApiData(null)
-      setOverlayMetrics(null)
-      fetchCountryGeometry(searchResult.lat, searchResult.lng, { fitBounds: true })
-
-      // Fetch API data and update region
-      fetchApiData(searchResult.lat, searchResult.lng).then((apiResults) => {
-        if (apiResults) {
-          regionData.temperature = apiResults.temperature
-          regionData.airQuality = apiResults.airQuality
-          regionData.floodRisk = apiResults.floodRisk
-          setOverlayMetrics({
-            temperature: apiResults.temperature,
-            airQuality: apiResults.airQuality,
-            floodRisk: apiResults.floodRisk,
-          })
-          setClickedLocation({ ...regionData })
-        }
-        onRegionSelect(regionData)
-      })
-    }
-  }, [searchResult, map])
-
-  const fetchApiData = async (lat: number, lng: number): Promise<ApiData | null> => {
+  const fetchApiData = useCallback(async (lat: number, lng: number): Promise<ApiData | null> => {
     setIsLoadingApi(true)
     console.log('🗺️ Fetching API data for popup:', { lat, lng })
 
@@ -663,7 +900,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
         floodResponse.json(),
       ])
 
-      console.log('✅ API data fetched for popup:', { tempData, aqData, floodData })
+      console.log('API data fetched for popup:', { tempData, aqData, floodData })
 
       const apiResults: ApiData = {
         temperature: tempData.data?.currentTemp || 0,
@@ -674,13 +911,74 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
       setApiData(apiResults)
       return apiResults
     } catch (error) {
-      console.error('❌ Error fetching API data for popup:', error)
+      console.error('Error fetching API data for popup:', error)
       setApiData(null)
       return null
     } finally {
       setIsLoadingApi(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!searchResult || !map) return
+
+    const run = async () => {
+      console.log('🔍 Navigating to:', searchResult.name)
+      map.flyTo([searchResult.lat, searchResult.lng], 10, {
+        duration: 1.5
+      })
+
+      let regionData: RegionData = {
+        name: searchResult.name,
+        lat: searchResult.lat,
+        lng: searchResult.lng,
+        temperature: 0,
+        airQuality: 0,
+        floodRisk: 0,
+      }
+
+      setClickedLocation(regionData)
+      setApiData(null)
+      setOverlayMetrics(null)
+      setSelectedCountryGeometry(null)
+
+      const geometryResult = await fetchCountryGeometry(searchResult.lat, searchResult.lng, {
+        fitBounds: true,
+        properties: { name: searchResult.name },
+      })
+      if (geometryResult.countryName) {
+        const resolvedName = geometryResult.countryName ?? regionData.name
+        regionData = { ...regionData, name: resolvedName }
+        setClickedLocation((prev) => (prev ? { ...prev, name: resolvedName } : regionData))
+      }
+
+      const apiResults = await fetchApiData(searchResult.lat, searchResult.lng)
+      if (apiResults) {
+        regionData = {
+          ...regionData,
+          temperature: apiResults.temperature,
+          airQuality: apiResults.airQuality,
+          floodRisk: apiResults.floodRisk,
+        }
+        setOverlayMetrics({
+          temperature: apiResults.temperature,
+          airQuality: apiResults.airQuality,
+          floodRisk: apiResults.floodRisk,
+        })
+        setClickedLocation(regionData)
+      } else {
+        setOverlayMetrics({
+          temperature: regionData.temperature,
+          airQuality: regionData.airQuality,
+          floodRisk: regionData.floodRisk,
+        })
+      }
+
+      onRegionSelect(regionData)
+    }
+
+    run()
+  }, [searchResult, map, fetchCountryGeometry, fetchApiData])
 
   const handleMapClick = async (lat: number, lng: number) => {
     // Normalize coordinates to valid ranges
@@ -692,7 +990,9 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
     console.log('🗺️ Clicked coords:', { lat: normalizedLat, lng: normalizedLng })
 
     // Create region data for clicked location
-    const regionData: RegionData = {
+    setSelectedCountryGeometry(null)
+
+    let regionData: RegionData = {
       name: `Location (${normalizedLat.toFixed(4)}, ${normalizedLng.toFixed(4)})`,
       lat: normalizedLat,
       lng: normalizedLng,
@@ -705,7 +1005,16 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
     setClickedLocation(regionData)
     setApiData(null) // Reset previous API data
     setOverlayMetrics(null)
-    fetchCountryGeometry(normalizedLat, normalizedLng, { fitBounds: true })
+
+    const geometryResult = await fetchCountryGeometry(normalizedLat, normalizedLng, {
+      fitBounds: true,
+      properties: { name: regionData.name },
+    })
+    if (geometryResult.countryName) {
+      const resolvedName = geometryResult.countryName ?? regionData.name
+      regionData = { ...regionData, name: resolvedName }
+      setClickedLocation(regionData)
+    }
 
     // Fetch API data with normalized coordinates
     const apiResults = await fetchApiData(normalizedLat, normalizedLng)
@@ -720,7 +1029,19 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
         airQuality: apiResults.airQuality,
         floodRisk: apiResults.floodRisk,
       })
-      setClickedLocation({ ...regionData })
+      regionData = {
+        ...regionData,
+        temperature: apiResults.temperature,
+        airQuality: apiResults.airQuality,
+        floodRisk: apiResults.floodRisk,
+      }
+      setClickedLocation(regionData)
+    } else {
+      setOverlayMetrics({
+        temperature: regionData.temperature,
+        airQuality: regionData.airQuality,
+        floodRisk: regionData.floodRisk,
+      })
     }
 
     // Update sidebar with complete data
@@ -746,164 +1067,36 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
     }
   })()
 
+  useEffect(() => {
+    if (!onOverlayStateChange) return
+
+    onOverlayStateChange({
+      hasGeometry: Boolean(selectedCountryGeometry),
+      overlayMetrics,
+    })
+  }, [onOverlayStateChange, overlayMetrics, selectedCountryGeometry])
+
   if (!mounted) {
     return <div className="h-full flex items-center justify-center text-gray-400">Loading map...</div>
   }
 
   return (
     <div id={mapId} className="h-full w-full relative">
-      {/* Satellite Overlay Controls */}
-      <div className="absolute top-4 left-4 z-[999] bg-[#1a1a1a] border border-gray-700 rounded-lg p-3 shadow-2xl max-w-[240px]">
-        <div className="text-sm font-bold text-white mb-2">🛰️ Climate Severity Overlays</div>
-        <div className="space-y-1">
-          <button
-            onClick={() => setActiveOverlay(activeOverlay === 'temperature' ? 'none' : 'temperature')}
-            className={`w-full px-2 py-1 text-xs rounded transition-colors ${
-              activeOverlay === 'temperature'
-                ? 'bg-red-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            🌡️ Temperature Severity
-          </button>
-          <button
-            onClick={() => setActiveOverlay(activeOverlay === 'air-quality' ? 'none' : 'air-quality')}
-            className={`w-full px-2 py-1 text-xs rounded transition-colors ${
-              activeOverlay === 'air-quality'
-                ? 'bg-purple-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            💨 Air Quality Severity
-          </button>
-          <button
-            onClick={() => setActiveOverlay(activeOverlay === 'flood' ? 'none' : 'flood')}
-            className={`w-full px-2 py-1 text-xs rounded transition-colors ${
-              activeOverlay === 'flood'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            🌊 Flood Risk Severity
-          </button>
-          <button
-            onClick={() => setActiveOverlay(activeOverlay === 'combined' ? 'none' : 'combined')}
-            className={`w-full px-2 py-1 text-xs rounded transition-colors ${
-              activeOverlay === 'combined'
-                ? 'bg-amber-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            🧪 Combined Climate Risk
-          </button>
+      {isLoadingApi && (
+        <div className="pointer-events-none absolute inset-0 z-[1002] flex items-center justify-center bg-black/45 backdrop-blur-sm">
+          <div className="flex items-center gap-3 text-gray-100 text-sm">
+            <span className="h-4 w-4 rounded-full border-2 border-gray-300 border-t-transparent animate-spin"></span>
+            <span>Analyzing region...</span>
+          </div>
         </div>
-
-        {(!selectedCountryGeometry || !overlayMetrics) && (
-          <div className="mt-2 text-[10px] text-gray-400 italic">
-            Click a country to activate coloring
-          </div>
-        )}
-
-        {activeOverlay !== 'none' && overlayMetrics && (
-          <div className="mt-3 pt-3 border-t border-gray-700">
-            <div className="text-xs text-gray-400 mb-1">Legend:</div>
-            {activeOverlay === 'temperature' && (
-              <div className="space-y-1 text-xs">
-                <div className="text-[10px] text-gray-400 mb-1">Temperature Risk Levels</div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-green-500"></div>
-                  <span className="text-gray-300">Low (&lt; 20°C)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-yellow-500"></div>
-                  <span className="text-gray-300">Moderate (20-30°C)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-orange-500"></div>
-                  <span className="text-gray-300">High (30-40°C)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-600"></div>
-                  <span className="text-gray-300">Critical (&gt; 40°C)</span>
-                </div>
-              </div>
-            )}
-            {activeOverlay === 'air-quality' && (
-              <div className="space-y-1 text-xs">
-                <div className="text-[10px] text-gray-400 mb-1">Air Quality Risk Levels</div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-green-500"></div>
-                  <span className="text-gray-300">Good (0-50)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-yellow-500"></div>
-                  <span className="text-gray-300">Moderate (51-100)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-orange-500"></div>
-                  <span className="text-gray-300">Unhealthy (101-200)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-600"></div>
-                  <span className="text-gray-300">Hazardous (&gt; 200)</span>
-                </div>
-              </div>
-            )}
-            {activeOverlay === 'flood' && (
-              <div className="space-y-1 text-xs">
-                <div className="text-[10px] text-gray-400 mb-1">Flood Risk Levels</div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-green-500"></div>
-                  <span className="text-gray-300">Low (0-30%)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-yellow-500"></div>
-                  <span className="text-gray-300">Moderate (31-60%)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-orange-500"></div>
-                  <span className="text-gray-300">High (61-80%)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-600"></div>
-                  <span className="text-gray-300">Critical (&gt; 80%)</span>
-                </div>
-              </div>
-            )}
-            {activeOverlay === 'combined' && (
-              <div className="space-y-1 text-xs">
-                <div className="text-[10px] text-gray-400 mb-1">Composite Climate Risk</div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-green-500"></div>
-                  <span className="text-gray-300">Low (Score ≤ 30)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-yellow-500"></div>
-                  <span className="text-gray-300">Moderate (31-50)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-orange-500"></div>
-                  <span className="text-gray-300">High (51-70)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-600"></div>
-                  <span className="text-gray-300">Critical (&gt; 70)</span>
-                </div>
-              </div>
-            )}
-            <div className="mt-2 text-[10px] text-gray-500 italic">
-              Real-time NASA GIBS satellite data
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Urban Planning Controls */}
       <div className="absolute top-4 right-4 z-[1001] bg-[#1a1a1a] border border-gray-700 rounded-lg shadow-2xl max-w-sm">
         {/* Header with collapse button */}
-        <div className="flex items-center justify-between p-4 pb-2">
+        {/* <div className="flex items-center justify-between p-4 pb-2">
           <div className="text-lg font-bold text-white flex items-center gap-2">
-            🏗️ NASA Urban Planning Assistant
+            NASA Urban Planning Assistant
           </div>
           <button
             onClick={() => setIsPlanningPanelCollapsed(!isPlanningPanelCollapsed)}
@@ -920,13 +1113,13 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
               </svg>
             )}
           </button>
-        </div>
+        </div> */}
 
         {/* Collapsible content */}
-        {!isPlanningPanelCollapsed && (
-          <div className="px-4 pb-4">
+        {/* {!isPlanningPanelCollapsed && (
+          <div className="px-4 pb-4"> */}
             {/* Analysis Mode Selector */}
-            <div className="space-y-3 mb-4">
+            {/* <div className="space-y-3 mb-4">
               <div className="flex gap-2">
                 <button
                   onClick={() => setAnalysisMode('region')}
@@ -946,7 +1139,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                       : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
                   }`}
                 >
-                  🏗️ Grid
+                  Grid
                 </button>
               </div>
 
@@ -991,21 +1184,21 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                   </div>
                 </div>
               )}
-            </div>
+            </div> */}
 
             {/* Loading indicator */}
-            {isGeneratingGrid && (
+            {/* {isGeneratingGrid && (
               <div className="bg-blue-900/50 border border-blue-600 rounded-lg p-3 mb-4">
                 <div className="flex items-center gap-2 text-blue-200">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
                   <span className="text-sm">Generating development grid...</span>
                 </div>
               </div>
-            )}
+            )} */}
 
             {/* Instructions */}
-            <div className="text-xs text-gray-400 mb-4 p-3 bg-gray-800 rounded border border-gray-600">
-              <div className="font-semibold text-gray-300 mb-2">📍 How to Use:</div>
+            {/* <div className="text-xs text-gray-400 mb-4 p-3 bg-gray-800 rounded border border-gray-600">
+              <div className="font-semibold text-gray-300 mb-2">How to Use:</div>
               {analysisMode === 'region' ? (
                 <div className="space-y-1">
                   <p><strong>Region Mode:</strong> Fast analysis with just 3 API calls</p>
@@ -1017,7 +1210,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
               ) : (
                 <ol className="space-y-1 list-decimal list-inside">
                   <li>Zoom to your area of interest (zoom 12+)</li>
-                  <li>Click "Generate" to load grid data</li>
+                  <li>Click &quot;Generate&quot; to load grid data</li>
                   <li>Click cells for detailed insights</li>
                   <li>Green = Suitable, Red = Not recommended</li>
                 </ol>
@@ -1031,10 +1224,10 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                   <span className="text-gray-500"> / 16.0 max</span>
                 </div>
               )}
-            </div>
+            </div> */}
 
             {/* Growth Suitability Legend */}
-            <div className="border-t border-gray-600 pt-4">
+            {/* <div className="border-t border-gray-600 pt-4">
               <div className="text-sm font-semibold text-gray-300 mb-3">Development Suitability Grid:</div>
               <div className="space-y-2 text-xs">
                 <div className="flex items-center gap-3">
@@ -1079,14 +1272,14 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                 <div>• GIBS Earth Observation • POWER Climate Data</div>
                 <div>• Air Quality Index • Flood Risk Assessment</div>
               </div>
-            </div>
-        </div>
-        )}
-      </div>
+            </div> */}
+        {/* </div>
+        )} */}
+      </div> 
 
       <MapContainer
         key={mapId}
-        center={[-6.9175, 107.6191]} // Bandung, Indonesia
+        center={[40.7128, -74.006]} // New York City, USA
         zoom={10}
         minZoom={3}
         maxZoom={16} // Reduced from 18 to limit excessive zooming
@@ -1229,7 +1422,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                     )}
                     {cell.habitability === 'good' && (
                       <div className="bg-green-50 p-3 rounded border border-green-200">
-                        <div className="font-semibold text-green-700 mb-2">✅ SUITABLE FOR DEVELOPMENT</div>
+                        <div className="font-semibold text-green-700 mb-2">SUITABLE FOR DEVELOPMENT</div>
                         <ul className="text-green-600 space-y-1 text-xs">
                           <li>• Medium-density mixed-use development</li>
                           <li>• Standard infrastructure requirements</li>
@@ -1240,7 +1433,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                     )}
                     {cell.habitability === 'moderate' && (
                       <div className="bg-yellow-50 p-3 rounded border border-yellow-200">
-                        <div className="font-semibold text-yellow-800 mb-2">⚠️ CONDITIONAL DEVELOPMENT</div>
+                        <div className="font-semibold text-yellow-800 mb-2">CONDITIONAL DEVELOPMENT</div>
                         <ul className="text-yellow-700 space-y-1 text-xs">
                           <li>• Low-density development only</li>
                           <li>• Enhanced climate-resilient infrastructure</li>
@@ -1262,7 +1455,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                     )}
                     {cell.habitability === 'critical' && (
                       <div className="bg-red-50 p-3 rounded border border-red-200">
-                        <div className="font-semibold text-red-800 mb-2">❌ NOT RECOMMENDED FOR DEVELOPMENT</div>
+                        <div className="font-semibold text-red-800 mb-2">NOT RECOMMENDED FOR DEVELOPMENT</div>
                         <ul className="text-red-700 space-y-1 text-xs">
                           <li>• Severe environmental and climate risks</li>
                           <li>• Designate as conservation or protection area</li>
@@ -1296,7 +1489,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
               }
             }}
           >
-            <Popup autoClose={false} closeOnClick={false}>
+            {/* <Popup autoClose={false} closeOnClick={false}>
               <div className="p-3 min-w-[200px]">
                 <h3 className="font-semibold text-sm mb-3 text-gray-800 border-b pb-2">
                   {clickedLocation.name}
@@ -1311,7 +1504,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-600 flex items-center gap-1">
-                        🌡️ Temperature:
+                        Temperature:
                       </span>
                       <span className="text-sm font-medium text-gray-900">
                         {apiData.temperature !== undefined ? `${apiData.temperature}°C` : 'N/A'}
@@ -1319,7 +1512,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-600 flex items-center gap-1">
-                        💨 Air Quality:
+                        Air Quality:
                       </span>
                       <span className="text-sm font-medium text-gray-900">
                         {apiData.airQuality !== undefined ? `AQI ${apiData.airQuality}` : 'N/A'}
@@ -1327,7 +1520,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-600 flex items-center gap-1">
-                        🌊 Flood Risk:
+                        Flood Risk:
                       </span>
                       <span className="text-sm font-medium text-gray-900">
                         {apiData.floodRisk !== undefined ? `${apiData.floodRisk}%` : 'N/A'}
@@ -1343,7 +1536,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-600 flex items-center gap-1">
-                        🌡️ Temperature:
+                        Temperature:
                       </span>
                       <span className="text-sm font-medium text-gray-900">
                         {clickedLocation.temperature}°C
@@ -1351,7 +1544,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-600 flex items-center gap-1">
-                        💨 Air Quality:
+                       Air Quality:
                       </span>
                       <span className="text-sm font-medium text-gray-900">
                         AQI {clickedLocation.airQuality}
@@ -1359,7 +1552,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-600 flex items-center gap-1">
-                        🌊 Flood Risk:
+                        Flood Risk:
                       </span>
                       <span className="text-sm font-medium text-gray-900">
                         {clickedLocation.floodRisk}%
@@ -1374,10 +1567,11 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                   </p>
                 </div>
               </div>
-            </Popup>
+            </Popup> */}
           </Marker>
         )}
       </MapContainer>
     </div>
   )
 }
+

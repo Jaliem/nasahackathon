@@ -1,140 +1,33 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Navigation from '@/components/Navigation'
-import type { RegionData } from '@/components/MapComponent'
+import type { OverlayType, RegionData } from '@/components/MapComponent'
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), {
   ssr: false,
   loading: () => <div className="h-full flex items-center justify-center text-gray-400">Loading map...</div>,
 })
 
-export default function Dashboard() {
-  const [selectedRegion, setSelectedRegion] = useState<RegionData | null>(null)
-  const [mapKey] = useState(() => `dashboard-map-${Date.now()}`)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResult, setSearchResult] = useState<{ lat: number; lng: number; name: string } | null>(null)
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!searchQuery.trim()) return
-
-    try {
-      // Using OpenStreetMap Nominatim API for free geocoding
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`
-      )
-      const data = await response.json()
-
-      if (data && data.length > 0) {
-        const result = data[0]
-        setSearchResult({
-          lat: parseFloat(result.lat),
-          lng: parseFloat(result.lon),
-          name: result.display_name
-        })
-      }
-    } catch (error) {
-      console.error('Error searching location:', error)
-    }
-  }
-
-  return (
-    <div className="flex flex-col h-screen bg-[#0f0f0f]">
-      <Navigation />
-
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 relative">
-          {/* Search Bar */}
-          <div className="absolute top-4 left-4 z-[1000] w-80">
-            <form onSubmit={handleSearch} className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Search any city (e.g., Jakarta, Tokyo, Paris)..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1 px-4 py-2 bg-[#1a1a1a] border border-gray-700 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-gray-500 rounded shadow-lg"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow-lg"
-              >
-                Search
-              </button>
-            </form>
-          </div>
-
-          <MapComponent key={mapKey} onRegionSelect={setSelectedRegion} searchResult={searchResult} />
-        </div>
-
-        <aside className="w-96 bg-[#1a1a1a] overflow-y-auto border-l border-gray-800">
-          <div className="p-6">
-            <h2 className="text-lg font-medium mb-6 text-gray-200">
-              Region Data
-            </h2>
-
-            {selectedRegion ? (
-              <div className="space-y-4">
-                <div className="pb-4 border-b border-gray-800">
-                  <h3 className="text-base font-medium text-gray-200 mb-1">
-                    {selectedRegion.name}
-                  </h3>
-                  <p className="text-xs text-gray-500">
-                    {selectedRegion.lat.toFixed(4)}, {selectedRegion.lng.toFixed(4)}
-                  </p>
-                </div>
-
-                <DataCard
-                  title="Temperature"
-                  value={`${selectedRegion.temperature}°C`}
-                  risk={getRiskLevel(selectedRegion.temperature, 'temperature')}
-                />
-
-                <DataCard
-                  title="Air Quality Index"
-                  value={selectedRegion.airQuality.toString()}
-                  risk={getRiskLevel(selectedRegion.airQuality, 'airQuality')}
-                />
-
-                <DataCard
-                  title="Flood Risk"
-                  value={`${selectedRegion.floodRisk}%`}
-                  risk={getRiskLevel(selectedRegion.floodRisk, 'floodRisk')}
-                />
-
-                <div className="pt-4 border-t border-gray-800">
-                  <h4 className="text-sm font-medium text-gray-300 mb-3">
-                    Predictions
-                  </h4>
-                  <div className="space-y-2">
-                    <PredictButton type="temperature" region={selectedRegion} />
-                    <PredictButton type="air-quality" region={selectedRegion} />
-                    <PredictButton type="flood" region={selectedRegion} />
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="text-center text-gray-500 mt-20">
-                <p className="text-sm">
-                  Click on the map to view region data
-                </p>
-              </div>
-            )}
-          </div>
-        </aside>
-      </div>
-    </div>
-  )
+const DEFAULT_REGION = {
+  name: 'New York, USA',
+  lat: 40.7128,
+  lng: -74.006,
 }
+
+
 
 interface DataCardProps {
   title: string
   value: string
   risk: 'low' | 'moderate' | 'high'
+  overlayType?: OverlayType
+  activeOverlay?: OverlayType
+  onSelectOverlay?: (overlay: OverlayType) => void
 }
 
-function DataCard({ title, value, risk }: DataCardProps) {
+function DataCard({ title, value, risk, overlayType, activeOverlay, onSelectOverlay }: DataCardProps) {
   const riskColors = {
     low: 'border-green-600',
     moderate: 'border-yellow-600',
@@ -147,8 +40,15 @@ function DataCard({ title, value, risk }: DataCardProps) {
     high: 'High',
   }
 
-  return (
-    <div className={`bg-[#222] border-l-2 ${riskColors[risk]} p-4`}>
+  const isClickable = Boolean(overlayType && onSelectOverlay)
+  const isActive = Boolean(overlayType && activeOverlay === overlayType)
+
+  const content = (
+    <div
+      className={`bg-[#222] border-l-2 ${riskColors[risk]} p-4 transition-colors ${
+        isClickable ? 'hover:bg-[#242424] cursor-pointer' : ''
+      } ${isActive ? 'ring-2 ring-amber-500' : ''}`}
+    >
       <div className="flex items-center justify-between mb-2">
         <p className="text-xs text-gray-400 uppercase tracking-wide">{title}</p>
         <span className="text-xs text-gray-500">{riskLabels[risk]}</span>
@@ -156,6 +56,20 @@ function DataCard({ title, value, risk }: DataCardProps) {
       <p className="text-xl font-medium text-gray-100">{value}</p>
     </div>
   )
+
+  if (isClickable && overlayType) {
+    return (
+      <button
+        type="button"
+        onClick={() => onSelectOverlay?.(overlayType)}
+        className="w-full text-left focus:outline-none"
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return content
 }
 
 interface PredictButtonProps {
@@ -331,3 +245,246 @@ function getRiskLevel(value: number, type: string): 'low' | 'moderate' | 'high' 
   }
   return 'moderate'
 }
+
+interface OverlayControlsProps {
+  activeOverlay: OverlayType
+  onToggle: (overlay: OverlayType) => void
+  overlayState: OverlayState
+}
+
+function OverlayControls({ activeOverlay, onToggle, overlayState }: OverlayControlsProps) {
+  const buttons: Array<{ id: OverlayType; label: string; activeClass: string }> = [
+    { id: 'temperature', label: 'Temperature Severity', activeClass: 'bg-red-600 text-white' },
+    { id: 'air-quality', label: 'Air Quality Severity', activeClass: 'bg-purple-600 text-white' },
+    { id: 'flood', label: 'Flood Risk Severity', activeClass: 'bg-blue-600 text-white' },
+    { id: 'combined', label: 'Combined Climate Risk', activeClass: 'bg-amber-600 text-white' },
+  ]
+
+  const legendMap: Record<Exclude<OverlayType, 'none'>, { title: string; entries: Array<{ color: string; label: string }> }> = {
+    temperature: {
+      title: 'Temperature Risk Levels',
+      entries: [
+        { color: 'bg-green-500', label: 'Low (< 20°C)' },
+        { color: 'bg-yellow-500', label: 'Moderate (20-30°C)' },
+        { color: 'bg-orange-500', label: 'High (30-40°C)' },
+        { color: 'bg-red-600', label: 'Critical (> 40°C)' },
+      ],
+    },
+    'air-quality': {
+      title: 'Air Quality Risk Levels',
+      entries: [
+        { color: 'bg-green-500', label: 'Good (0-50)' },
+        { color: 'bg-yellow-500', label: 'Moderate (51-100)' },
+        { color: 'bg-orange-500', label: 'Unhealthy (101-200)' },
+        { color: 'bg-red-600', label: 'Hazardous (> 200)' },
+      ],
+    },
+    flood: {
+      title: 'Flood Risk Levels',
+      entries: [
+        { color: 'bg-green-500', label: 'Low (0-30%)' },
+        { color: 'bg-yellow-500', label: 'Moderate (31-60%)' },
+        { color: 'bg-orange-500', label: 'High (61-80%)' },
+        { color: 'bg-red-600', label: 'Critical (> 80%)' },
+      ],
+    },
+    combined: {
+      title: 'Composite Climate Risk',
+      entries: [
+        { color: 'bg-green-500', label: 'Low (Score ≤ 30)' },
+        { color: 'bg-yellow-500', label: 'Moderate (31-50)' },
+        { color: 'bg-orange-500', label: 'High (51-70)' },
+        { color: 'bg-red-600', label: 'Critical (> 70)' },
+      ],
+    },
+  }
+
+  const showLegend = activeOverlay !== 'none' && overlayState.overlayMetrics && overlayState.hasGeometry
+  const legend = showLegend && legendMap[activeOverlay as Exclude<OverlayType, 'none'>]
+
+  return (
+    <div className="bg-[#1a1a1a] border border-gray-700 rounded-lg p-3 shadow-inner">
+
+      {legend && (
+        <div className=" border-gray-700">
+          <div className="text-xs text-gray-400 mb-1">Legend</div>
+          <div className="space-y-1 text-xs">
+            <div className="text-[10px] text-gray-400 mb-1">{legend.title}</div>
+            {legend.entries.map((entry) => (
+              <div key={entry.label} className="flex items-center gap-2">
+                <div className={`w-3 h-3 ${entry.color}`}></div>
+                <span className="text-gray-300">{entry.label}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 text-[10px] text-gray-500 italic">
+            Real-time NASA GIBS satellite data
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+type OverlayState = {
+  hasGeometry: boolean
+  overlayMetrics: { temperature: number; airQuality: number; floodRisk: number } | null
+}
+
+export default function Dashboard() {
+  const [selectedRegion, setSelectedRegion] = useState<RegionData | null>(null)
+  const [mapKey] = useState(() => `dashboard-map-${Date.now()}`)
+  const [searchQuery, setSearchQuery] = useState(DEFAULT_REGION.name)
+  const [searchResult, setSearchResult] = useState<{ lat: number; lng: number; name: string } | null>(() => ({
+    lat: DEFAULT_REGION.lat,
+    lng: DEFAULT_REGION.lng,
+    name: DEFAULT_REGION.name,
+  }))
+  const [activeOverlay, setActiveOverlay] = useState<OverlayType>('temperature')
+  const [overlayState, setOverlayState] = useState<OverlayState>({ hasGeometry: false, overlayMetrics: null })
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!searchQuery.trim()) return
+
+    try {
+      // Using OpenStreetMap Nominatim API for free geocoding
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`
+      )
+      const data = await response.json()
+
+      if (data && data.length > 0) {
+        const result = data[0]
+        setSearchResult({
+          lat: parseFloat(result.lat),
+          lng: parseFloat(result.lon),
+          name: result.display_name
+        })
+      }
+    } catch (error) {
+      console.error('Error searching location:', error)
+    }
+  }
+
+  const handleOverlayStateChange = useCallback((state: OverlayState) => {
+    setOverlayState(state)
+  }, [])
+
+  const handleOverlayToggle = useCallback((overlay: OverlayType) => {
+    setActiveOverlay((current) => (current === overlay ? 'none' : overlay))
+  }, [])
+
+  return (
+    <div className="flex flex-col h-screen bg-[#0f0f0f]">
+      <Navigation />
+
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 relative">
+          {/* Search Bar */}
+          <div className="absolute top-6 right-6 z-[1000] w-[28rem] max-w-[calc(100%-3rem)]">
+            <form onSubmit={handleSearch} className="flex gap-3">
+              <input
+                type="text"
+                placeholder="Search any city (e.g., Jakarta, Tokyo, Paris)..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 px-5 py-3 bg-[#1a1a1a] border border-gray-700 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-gray-500 rounded-lg shadow-xl"
+              />
+              <button
+                type="submit"
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-xl"
+              >
+                Search
+              </button>
+            </form>
+          </div>
+
+          <MapComponent
+            key={mapKey}
+            onRegionSelect={setSelectedRegion}
+            searchResult={searchResult}
+            activeOverlay={activeOverlay}
+            onOverlayStateChange={handleOverlayStateChange}
+          />
+        </div>
+
+        <aside className="w-96 bg-[#1a1a1a] overflow-y-auto border-l border-gray-800">
+          <div className="p-6">
+            <h2 className="text-lg font-medium mb-6 text-gray-200">
+              Region Data
+            </h2>
+
+            {selectedRegion ? (
+              <div className="space-y-4">
+                <div className="pb-4 border-b border-gray-800">
+                  <h3 className="text-base font-medium text-gray-200 mb-1">
+                    {selectedRegion.name}
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    {selectedRegion.lat.toFixed(4)}, {selectedRegion.lng.toFixed(4)}
+                  </p>
+                </div>
+
+              
+
+                <DataCard
+                  title="Temperature"
+                  value={`${selectedRegion.temperature}°C`}
+                  risk={getRiskLevel(selectedRegion.temperature, 'temperature')}
+                  overlayType="temperature"
+                  activeOverlay={activeOverlay}
+                  onSelectOverlay={handleOverlayToggle}
+                />
+
+                <DataCard
+                  title="Air Quality Index"
+                  value={selectedRegion.airQuality.toString()}
+                  risk={getRiskLevel(selectedRegion.airQuality, 'airQuality')}
+                  overlayType="air-quality"
+                  activeOverlay={activeOverlay}
+                  onSelectOverlay={handleOverlayToggle}
+                />
+
+                <DataCard
+                  title="Flood Risk"
+                  value={`${selectedRegion.floodRisk}%`}
+                  risk={getRiskLevel(selectedRegion.floodRisk, 'floodRisk')}
+                  overlayType="flood"
+                  activeOverlay={activeOverlay}
+                  onSelectOverlay={handleOverlayToggle}
+                />
+
+                
+                 <OverlayControls
+                  activeOverlay={activeOverlay}
+                  onToggle={handleOverlayToggle}
+                  overlayState={overlayState}
+                />
+
+                <div className="pt-4 border-t border-gray-800">
+                  <h4 className="text-sm font-medium text-gray-300 mb-3">
+                    Predictions
+                  </h4>
+                  <div className="space-y-2">
+                    <PredictButton type="temperature" region={selectedRegion} />
+                    <PredictButton type="air-quality" region={selectedRegion} />
+                    <PredictButton type="flood" region={selectedRegion} />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center text-gray-500 mt-20">
+                <p className="text-sm">
+                  Click on the map to view region data
+                </p>
+              </div>
+            )}
+          </div>
+          
+        </aside>
+      </div>
+    </div>
+  )
+}
+

@@ -3,12 +3,19 @@ import Navigation from "@/components/Navigation";
 import { Globe } from "@/components/Globe";
 import Image from "next/image";
 
+const BotIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-300">
+        <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" />
+        <path d="M2 12h20" />
+        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+);
+
 export default function Home() {
   return (
     <div className="flex flex-col min-h-screen bg-[#000000]">
       <div className="relative group">
         <Navigation />
-        <div className="absolute overflow-hidden left-0 right-0 top-full h-20 bg-gradient-to-b from-gray-200/20 to-transparent blur-md pointer-events-none"></div>
       </div>
 
       {/* Main container with padding removed to allow for full-width sections */}
@@ -171,6 +178,73 @@ export default function Home() {
             </div>
           </section>
         </div>
+
+        <section>
+          <div className="bg-black text-gray-200 py-20 sm:py-32">
+            <div className="max-w-7xl mx-auto px-6 lg:px-8 grid grid-cols-1 md:grid-cols-2 gap-16 items-center">
+                {/* Left side: Text content */}
+
+                {/* Right side: Chat UI mockup with new styling */}
+                <div className="group relative rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md shadow-xl p-4 sm:p-6 transition-all duration-500 hover:scale-105 hover:border-white/70 hover:bg-white/10 hover:shadow-2xl overflow-hidden">
+                    <div className="absolute -bottom-5 -left-5 -right-5 h-20 bg-gradient-to-t from-gray-300/10 to-transparent rounded-b-2xl blur-md"></div>
+                    {/* Header */}
+                    <div className="relative z-10 flex items-center mb-6 space-x-3">
+                        <div className="flex-shrink-0 bg-black/50 p-2 rounded-full border border-gray-700">
+                            <BotIcon />
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-white">TerraBot</h3>
+                            <p className="text-sm text-gray-400 flex items-center">
+                                <span className="w-2 h-2 bg-white rounded-full mr-1.5"></span>
+                                Online
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Chat messages */}
+                    <div className="relative z-10 space-y-5">
+                        {/* Bot message 1 */}
+                        <div className="flex items-start gap-3 max-w-md">
+                            <div className="flex-shrink-0 bg-black/50 p-2 rounded-full border border-gray-700">
+                                <BotIcon />
+                            </div>
+                            <div className="bg-black rounded-lg rounded-tl-none p-3 text-sm border-gray-700 border">
+                                <p>Welcome! I'm TerraBot. Ask me anything about urban environmental data or development suitability.</p>
+                            </div>
+                        </div>
+
+                        {/* User message */}
+                        <div className="flex justify-end">
+                          <div className="bg-gray-100 rounded-lg rounded-br-none p-3 text-gray-800 max-w-md text-sm">
+                            <p>Is it a good idea to build a new residential complex in West Jakarta?</p>
+                          </div>
+                        </div>
+                        
+                        {/* Bot message 2 */}
+                        <div className="flex items-start gap-3 max-w-md">
+                          <div className="flex-shrink-0 p-2 rounded-full border border-gray-700">
+                              <BotIcon />
+                          </div>
+                          <div className="bg-black rounded-lg rounded-tl-none p-3 text-sm border border-gray-700">
+                              <p>West Jakarta shows moderate air quality but a high flood-risk score. For a residential project, I would recommend elevating the foundation and including green spaces to mitigate heat.</p>
+                          </div>
+                      </div>
+                    </div>
+                </div>
+
+                <div className="md:pr-8">
+                    <h2 className="text-base font-semibold leading-7 text-gray-400"><i>Conversational AI</i></h2>
+                    <p className="mt-2 text-3xl font-bold tracking-tight text-white sm:text-4xl">Meet TerraBot</p>
+                    <p className="mt-6 text-lg leading-8 text-gray-300 text-justify">
+                        Go beyond dashboards. TerraBot is your personal environmental analyst. Ask complex questions in plain language and get instant, data-driven answers and development suitability assessments.
+                    </p>
+                    <p className="mt-4 text-gray-400 text-justify">
+                        It's designed to democratize data, making critical insights accessible to everyone from city planners to community stakeholders, fostering a more collaborative and informed decision-making process.
+                    </p>
+                </div>
+            </div>
+        </div>
+        </section>
 
         {/* Standalone Full-Width Hero Section */}
         <section className="w-full relative h-[60vh] md:h-[70vh] flex items-center justify-center mt-20 text-center overflow-hidden">

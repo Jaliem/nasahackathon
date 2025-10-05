@@ -283,21 +283,26 @@ async function fetchGIBSAirQualityData(lat: number, lng: number) {
       }
       console.log('✅ Using WAQI real air quality:', currentAQI)
     } else {
-      // Fallback to climate-based model
+      // Fallback to climate-based model with geographic variation
       const urbanFactor = Math.abs(lat) < 50 ? 20 : 5
       const baseAQI = 35 + urbanFactor
       const seasonalFactor = Math.abs(Math.sin((today.getMonth() / 12) * 2 * Math.PI)) * 15
-      currentAQI = Math.round(baseAQI + seasonalFactor + (Math.random() * 20))
+
+      // Add geographic variation based on coordinates
+      const geoVariation = Math.abs(Math.sin(lat * lng * 0.1)) * 25
+      const randomVariation = Math.random() * 30 - 10 // -10 to +20
+
+      currentAQI = Math.max(10, Math.round(baseAQI + seasonalFactor + geoVariation + randomVariation))
 
       pollutants = {
-        pm25: Math.round(currentAQI * 0.6),
-        pm10: Math.round(currentAQI * 0.8),
-        o3: Math.round(currentAQI * 0.4),
-        no2: Math.round(currentAQI * 0.3),
-        so2: 0,
-        co: 0,
+        pm25: Math.round(currentAQI * 0.6 + Math.random() * 10),
+        pm10: Math.round(currentAQI * 0.8 + Math.random() * 15),
+        o3: Math.round(currentAQI * 0.4 + Math.random() * 8),
+        no2: Math.round(currentAQI * 0.3 + Math.random() * 5),
+        so2: Math.round(Math.random() * 3),
+        co: Math.round(Math.random() * 2),
       }
-      console.log('⚠️ Using fallback climate model AQI:', currentAQI)
+      console.log('⚠️ Using fallback climate model AQI:', currentAQI, 'at', { lat, lng })
     }
 
     // Calculate aerosol optical depth estimate

@@ -80,6 +80,7 @@ export default function Home() {
                 .
               </p>
               <div className="flex gap-5">
+                
                 <Image
                   src="/nasa_logo.png"
                   alt="NASA Logo"
@@ -185,7 +186,7 @@ export default function Home() {
           </div>
           <div className="relative z-10 max-w-4xl px-4">
             <h2 className="text-5xl md:text-6xl font-bold text-white mb-6 leading-tight">
-              Uncover Urban Resilience
+              <i>Uncover</i> Urban Resilience
             </h2>
             <p className="text-lg md:text-xl text-gray-200 mb-10 leading-tight">
               Harness Earth observation data to predict environmental challenges and build a sustainable future for your city.

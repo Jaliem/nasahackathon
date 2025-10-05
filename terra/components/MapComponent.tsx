@@ -1,10 +1,70 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Popup, Marker, useMapEvents, useMap, Rectangle } from 'react-leaflet'
+import { useCallback, useEffect, useState } from 'react'
+import { MapContainer, TileLayer, Popup, Marker, useMapEvents, useMap, Rectangle, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import ReactDOMServer from 'react-dom/server'
+import type { Feature, FeatureCollection, Geometry, GeoJsonObject } from 'geojson'
+
+const SEVERITY_COLORS = {
+  low: '#22c55e',
+  moderate: '#eab308',
+  high: '#f97316',
+  critical: '#dc2626',
+}
+
+const temperatureSeverityColor = (temperature: number) => {
+  const value = Number.isFinite(temperature) ? temperature : 0
+  if (value < 20) return SEVERITY_COLORS.low
+  if (value < 30) return SEVERITY_COLORS.moderate
+  if (value < 40) return SEVERITY_COLORS.high
+  return SEVERITY_COLORS.critical
+}
+
+const airQualitySeverityColor = (aqi: number) => {
+  const value = Number.isFinite(aqi) ? aqi : 0
+  if (value <= 50) return SEVERITY_COLORS.low
+  if (value <= 100) return SEVERITY_COLORS.moderate
+  if (value <= 200) return SEVERITY_COLORS.high
+  return SEVERITY_COLORS.critical
+}
+
+const floodSeverityColor = (floodRisk: number) => {
+  const value = Number.isFinite(floodRisk) ? floodRisk : 0
+  if (value <= 30) return SEVERITY_COLORS.low
+  if (value <= 60) return SEVERITY_COLORS.moderate
+  if (value <= 80) return SEVERITY_COLORS.high
+  return SEVERITY_COLORS.critical
+}
+
+const combinedRiskSeverityColor = (riskScore: number) => {
+  const value = Number.isFinite(riskScore) ? riskScore : 0
+  if (value <= 30) return SEVERITY_COLORS.low
+  if (value <= 50) return SEVERITY_COLORS.moderate
+  if (value <= 70) return SEVERITY_COLORS.high
+  return SEVERITY_COLORS.critical
+}
+
+const buildFeatureFromGeometry = (geometry: Geometry, properties: Record<string, unknown> = {}): Feature => ({
+  type: 'Feature',
+  properties,
+  geometry,
+})
+
+const sanitizeFeatureCollection = (input: Feature | FeatureCollection | null): FeatureCollection | null => {
+  if (!input) return null
+
+  if (input.type === 'FeatureCollection') {
+    const polygonFeatures = input.features.filter((feature) => feature.geometry && feature.geometry.type !== 'Point')
+    return polygonFeatures.length ? { type: 'FeatureCollection', features: polygonFeatures } : null
+  }
+
+  if (input.geometry && input.geometry.type !== 'Point') {
+    return { type: 'FeatureCollection', features: [input] }
+  }
+
+  return null
+}
 
 export interface RegionData {
   name: string
@@ -137,8 +197,54 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
   const [analysisMode, setAnalysisMode] = useState<'grid' | 'region'>('region')
   const [selectedLocation, setSelectedLocation] = useState('')
   const [regionData, setRegionData] = useState<UrbanPlanningGrid | null>(null)
-  const [activeOverlay, setActiveOverlay] = useState<'none' | 'temp-day' | 'temp-night' | 'temp-anomaly' | 'air-quality' | 'precipitation'>('none')
-  const [showTempSubmenu, setShowTempSubmenu] = useState(false)
+  const [activeOverlay, setActiveOverlay] = useState<'none' | 'temperature' | 'air-quality' | 'flood' | 'combined'>('temperature')
+  const [isPlanningPanelCollapsed, setIsPlanningPanelCollapsed] = useState(false)
+  const [selectedCountryGeometry, setSelectedCountryGeometry] = useState<Feature | FeatureCollection | null>(null)
+  const [overlayMetrics, setOverlayMetrics] = useState<{ temperature: number; airQuality: number; floodRisk: number } | null>(null)
+
+  const updateSelectedGeometry = useCallback((geometry: Feature | FeatureCollection | null, options: { fitBounds?: boolean } = {}) => {
+    const sanitized = sanitizeFeatureCollection(geometry)
+    setSelectedCountryGeometry(sanitized)
+
+    if (!sanitized || !map || !options.fitBounds) {
+      return
+    }
+
+    try {
+      const geoLayer = L.geoJSON(sanitized as unknown as GeoJsonObject)
+      const bounds = geoLayer.getBounds()
+      if (bounds.isValid()) {
+        map.fitBounds(bounds, { padding: [32, 32] })
+      }
+    } catch (error) {
+      console.error('❌ Failed to focus on selected geometry:', error)
+    }
+  }, [map])
+
+  const fetchCountryGeometry = useCallback(async (lat: number, lng: number, options: { fitBounds?: boolean } = {}) => {
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=geojson&polygon_geojson=1&zoom=5&lat=${lat}&lon=${lng}`)
+      if (!response.ok) {
+        throw new Error('Reverse geocoding failed')
+      }
+
+      const data = await response.json()
+      if (!data || data.type !== 'FeatureCollection') {
+        return
+      }
+
+      const polygonFeatures = data.features?.filter((feature: Feature) => feature.geometry && feature.geometry.type !== 'Point')
+      if (polygonFeatures && polygonFeatures.length > 0) {
+        const featureCollection: FeatureCollection = {
+          type: 'FeatureCollection',
+          features: polygonFeatures,
+        }
+        updateSelectedGeometry(featureCollection, options)
+      }
+    } catch (error) {
+      console.error('❌ Failed to fetch country geometry:', error)
+    }
+  }, [updateSelectedGeometry])
 
   useEffect(() => {
     setMounted(true)
@@ -195,8 +301,10 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
 
     try {
       // Geocode the location
+      setOverlayMetrics(null)
+
       const geoResponse = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(locationName)}&limit=1`
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&polygon_geojson=1&q=${encodeURIComponent(locationName)}&limit=1`
       )
       const geoData = await geoResponse.json()
 
@@ -215,6 +323,13 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
 
       // Fly to location
       map.flyTo([lat, lng], 12, { duration: 1.5 })
+
+      const featureFromSearch = location.geojson ? buildFeatureFromGeometry(location.geojson as Geometry, { name: location.display_name }) : null
+      if (featureFromSearch) {
+        updateSelectedGeometry(featureFromSearch, { fitBounds: true })
+      } else {
+        fetchCountryGeometry(lat, lng, { fitBounds: true })
+      }
 
       // Fetch data for the center point of the region
       const [tempResponse, aqResponse, floodResponse] = await Promise.all([
@@ -280,6 +395,11 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
 
       setRegionData(regionAnalysis)
       setUrbanPlanningGrid([regionAnalysis])
+      setOverlayMetrics({
+        temperature: regionAnalysis.temperature,
+        airQuality: regionAnalysis.airQuality,
+        floodRisk: regionAnalysis.floodRisk,
+      })
       console.log(`✅ Region analysis complete for ${locationName}`)
 
     } catch (error) {
@@ -466,6 +586,7 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
   }
 
 
+
   // Clear grid data when switching modes
   useEffect(() => {
     setUrbanPlanningGrid([])
@@ -491,6 +612,8 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
 
       setClickedLocation(regionData)
       setApiData(null)
+      setOverlayMetrics(null)
+      fetchCountryGeometry(searchResult.lat, searchResult.lng, { fitBounds: true })
 
       // Fetch API data and update region
       fetchApiData(searchResult.lat, searchResult.lng).then((apiResults) => {
@@ -498,6 +621,12 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
           regionData.temperature = apiResults.temperature
           regionData.airQuality = apiResults.airQuality
           regionData.floodRisk = apiResults.floodRisk
+          setOverlayMetrics({
+            temperature: apiResults.temperature,
+            airQuality: apiResults.airQuality,
+            floodRisk: apiResults.floodRisk,
+          })
+          setClickedLocation({ ...regionData })
         }
         onRegionSelect(regionData)
       })
@@ -575,6 +704,8 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
     // Set clicked location to show popup
     setClickedLocation(regionData)
     setApiData(null) // Reset previous API data
+    setOverlayMetrics(null)
+    fetchCountryGeometry(normalizedLat, normalizedLng, { fitBounds: true })
 
     // Fetch API data with normalized coordinates
     const apiResults = await fetchApiData(normalizedLat, normalizedLng)
@@ -584,11 +715,36 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
       regionData.temperature = apiResults.temperature
       regionData.airQuality = apiResults.airQuality
       regionData.floodRisk = apiResults.floodRisk
+      setOverlayMetrics({
+        temperature: apiResults.temperature,
+        airQuality: apiResults.airQuality,
+        floodRisk: apiResults.floodRisk,
+      })
+      setClickedLocation({ ...regionData })
     }
 
     // Update sidebar with complete data
     onRegionSelect(regionData)
   }
+
+  const overlayFillColor = (() => {
+    if (!overlayMetrics) return null
+
+    switch (activeOverlay) {
+      case 'temperature':
+        return temperatureSeverityColor(overlayMetrics.temperature)
+      case 'air-quality':
+        return airQualitySeverityColor(overlayMetrics.airQuality)
+      case 'flood':
+        return floodSeverityColor(overlayMetrics.floodRisk)
+      case 'combined':
+        return combinedRiskSeverityColor(
+          calculateUrbanRiskScore(overlayMetrics.temperature, overlayMetrics.airQuality, overlayMetrics.floodRisk)
+        )
+      default:
+        return null
+    }
+  })()
 
   if (!mounted) {
     return <div className="h-full flex items-center justify-center text-gray-400">Loading map...</div>
@@ -597,58 +753,19 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
   return (
     <div id={mapId} className="h-full w-full relative">
       {/* Satellite Overlay Controls */}
-      <div className="absolute top-4 left-4 z-[999] bg-[#1a1a1a] border border-gray-700 rounded-lg p-3 shadow-2xl max-w-[220px]">
-        <div className="text-sm font-bold text-white mb-2">🛰️ NASA Satellite Overlays</div>
+      <div className="absolute top-4 left-4 z-[999] bg-[#1a1a1a] border border-gray-700 rounded-lg p-3 shadow-2xl max-w-[240px]">
+        <div className="text-sm font-bold text-white mb-2">🛰️ Climate Severity Overlays</div>
         <div className="space-y-1">
-          {/* Temperature with submenu */}
-          <div className="relative">
-            <button
-              onClick={() => setShowTempSubmenu(!showTempSubmenu)}
-              className={`w-full px-2 py-1 text-xs rounded transition-colors flex items-center justify-between ${
-                activeOverlay.startsWith('temp-')
-                  ? 'bg-red-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              }`}
-            >
-              <span>🌡️ Temperature</span>
-              <span className="text-xs">{showTempSubmenu ? '▼' : '▶'}</span>
-            </button>
-
-            {showTempSubmenu && (
-              <div className="mt-1 ml-2 space-y-1 border-l-2 border-gray-600 pl-2">
-                <button
-                  onClick={() => { setActiveOverlay(activeOverlay === 'temp-day' ? 'none' : 'temp-day'); }}
-                  className={`w-full px-2 py-1 text-[10px] rounded transition-colors text-left ${
-                    activeOverlay === 'temp-day'
-                      ? 'bg-orange-600 text-white'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
-                >
-                  ☀️ Day Surface Temp
-                </button>
-                <button
-                  onClick={() => { setActiveOverlay(activeOverlay === 'temp-night' ? 'none' : 'temp-night'); }}
-                  className={`w-full px-2 py-1 text-[10px] rounded transition-colors text-left ${
-                    activeOverlay === 'temp-night'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
-                >
-                  🌙 Night Surface Temp
-                </button>
-                <button
-                  onClick={() => { setActiveOverlay(activeOverlay === 'temp-anomaly' ? 'none' : 'temp-anomaly'); }}
-                  className={`w-full px-2 py-1 text-[10px] rounded transition-colors text-left ${
-                    activeOverlay === 'temp-anomaly'
-                      ? 'bg-red-600 text-white'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
-                >
-                  🔥 Temperature Anomaly
-                </button>
-              </div>
-            )}
-          </div>
+          <button
+            onClick={() => setActiveOverlay(activeOverlay === 'temperature' ? 'none' : 'temperature')}
+            className={`w-full px-2 py-1 text-xs rounded transition-colors ${
+              activeOverlay === 'temperature'
+                ? 'bg-red-600 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            🌡️ Temperature Severity
+          </button>
           <button
             onClick={() => setActiveOverlay(activeOverlay === 'air-quality' ? 'none' : 'air-quality')}
             className={`w-full px-2 py-1 text-xs rounded transition-colors ${
@@ -657,128 +774,120 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
                 : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
           >
-            💨 Air Quality
+            💨 Air Quality Severity
           </button>
           <button
-            onClick={() => setActiveOverlay(activeOverlay === 'precipitation' ? 'none' : 'precipitation')}
+            onClick={() => setActiveOverlay(activeOverlay === 'flood' ? 'none' : 'flood')}
             className={`w-full px-2 py-1 text-xs rounded transition-colors ${
-              activeOverlay === 'precipitation'
+              activeOverlay === 'flood'
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
           >
-            🌊 Precipitation
+            🌊 Flood Risk Severity
+          </button>
+          <button
+            onClick={() => setActiveOverlay(activeOverlay === 'combined' ? 'none' : 'combined')}
+            className={`w-full px-2 py-1 text-xs rounded transition-colors ${
+              activeOverlay === 'combined'
+                ? 'bg-amber-600 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            🧪 Combined Climate Risk
           </button>
         </div>
 
-        {/* Legend for active overlay */}
-        {activeOverlay !== 'none' && (
+        {(!selectedCountryGeometry || !overlayMetrics) && (
+          <div className="mt-2 text-[10px] text-gray-400 italic">
+            Click a country to activate coloring
+          </div>
+        )}
+
+        {activeOverlay !== 'none' && overlayMetrics && (
           <div className="mt-3 pt-3 border-t border-gray-700">
             <div className="text-xs text-gray-400 mb-1">Legend:</div>
-            {activeOverlay === 'temp-day' && (
+            {activeOverlay === 'temperature' && (
               <div className="space-y-1 text-xs">
-                <div className="text-[10px] text-gray-400 mb-1">Daytime Surface Temperature</div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-600"></div>
-                  <span className="text-gray-300">&lt; 10°C Cold</span>
-                </div>
+                <div className="text-[10px] text-gray-400 mb-1">Temperature Risk Levels</div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-green-500"></div>
-                  <span className="text-gray-300">10-25°C Mild</span>
+                  <span className="text-gray-300">Low (&lt; 20°C)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-yellow-500"></div>
-                  <span className="text-gray-300">25-35°C Warm</span>
+                  <span className="text-gray-300">Moderate (20-30°C)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-orange-500"></div>
-                  <span className="text-gray-300">35-45°C Hot</span>
+                  <span className="text-gray-300">High (30-40°C)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-red-600"></div>
-                  <span className="text-gray-300">&gt; 45°C Extreme</span>
-                </div>
-              </div>
-            )}
-            {activeOverlay === 'temp-night' && (
-              <div className="space-y-1 text-xs">
-                <div className="text-[10px] text-gray-400 mb-1">Nighttime Surface Temperature</div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-indigo-700"></div>
-                  <span className="text-gray-300">&lt; 0°C Freezing</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-500"></div>
-                  <span className="text-gray-300">0-10°C Cold</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-cyan-400"></div>
-                  <span className="text-gray-300">10-20°C Cool</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-yellow-500"></div>
-                  <span className="text-gray-300">20-30°C Warm</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-orange-500"></div>
-                  <span className="text-gray-300">&gt; 30°C Hot</span>
-                </div>
-              </div>
-            )}
-            {activeOverlay === 'temp-anomaly' && (
-              <div className="space-y-1 text-xs">
-                <div className="text-[10px] text-gray-400 mb-1">Temperature Deviation from Normal</div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-700"></div>
-                  <span className="text-gray-300">Much Cooler</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-400"></div>
-                  <span className="text-gray-300">Cooler</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-gray-400"></div>
-                  <span className="text-gray-300">Normal</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-orange-500"></div>
-                  <span className="text-gray-300">Warmer</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-600"></div>
-                  <span className="text-gray-300">Much Warmer</span>
+                  <span className="text-gray-300">Critical (&gt; 40°C)</span>
                 </div>
               </div>
             )}
             {activeOverlay === 'air-quality' && (
               <div className="space-y-1 text-xs">
+                <div className="text-[10px] text-gray-400 mb-1">Air Quality Risk Levels</div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-green-500"></div>
-                  <span className="text-gray-300">Clean</span>
+                  <span className="text-gray-300">Good (0-50)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-yellow-500"></div>
-                  <span className="text-gray-300">Moderate</span>
+                  <span className="text-gray-300">Moderate (51-100)</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-500"></div>
-                  <span className="text-gray-300">Polluted</span>
+                  <div className="w-3 h-3 bg-orange-500"></div>
+                  <span className="text-gray-300">Unhealthy (101-200)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-600"></div>
+                  <span className="text-gray-300">Hazardous (&gt; 200)</span>
                 </div>
               </div>
             )}
-            {activeOverlay === 'precipitation' && (
+            {activeOverlay === 'flood' && (
               <div className="space-y-1 text-xs">
+                <div className="text-[10px] text-gray-400 mb-1">Flood Risk Levels</div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-cyan-300"></div>
-                  <span className="text-gray-300">Light</span>
+                  <div className="w-3 h-3 bg-green-500"></div>
+                  <span className="text-gray-300">Low (0-30%)</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-500"></div>
-                  <span className="text-gray-300">Moderate</span>
+                  <div className="w-3 h-3 bg-yellow-500"></div>
+                  <span className="text-gray-300">Moderate (31-60%)</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-purple-600"></div>
-                  <span className="text-gray-300">Heavy</span>
+                  <div className="w-3 h-3 bg-orange-500"></div>
+                  <span className="text-gray-300">High (61-80%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-600"></div>
+                  <span className="text-gray-300">Critical (&gt; 80%)</span>
+                </div>
+              </div>
+            )}
+            {activeOverlay === 'combined' && (
+              <div className="space-y-1 text-xs">
+                <div className="text-[10px] text-gray-400 mb-1">Composite Climate Risk</div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-500"></div>
+                  <span className="text-gray-300">Low (Score ≤ 30)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-yellow-500"></div>
+                  <span className="text-gray-300">Moderate (31-50)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-orange-500"></div>
+                  <span className="text-gray-300">High (51-70)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-600"></div>
+                  <span className="text-gray-300">Critical (&gt; 70)</span>
                 </div>
               </div>
             )}
@@ -790,172 +899,195 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
       </div>
 
       {/* Urban Planning Controls */}
-      <div className="absolute top-4 right-4 z-[1001] bg-[#1a1a1a] border border-gray-700 rounded-lg p-4 shadow-2xl max-w-sm">
-        <div className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-          🏗️ NASA Urban Planning Assistant
+      <div className="absolute top-4 right-4 z-[1001] bg-[#1a1a1a] border border-gray-700 rounded-lg shadow-2xl max-w-sm">
+        {/* Header with collapse button */}
+        <div className="flex items-center justify-between p-4 pb-2">
+          <div className="text-lg font-bold text-white flex items-center gap-2">
+            🏗️ NASA Urban Planning Assistant
+          </div>
+          <button
+            onClick={() => setIsPlanningPanelCollapsed(!isPlanningPanelCollapsed)}
+            className="text-gray-400 hover:text-white transition-colors p-1"
+            title={isPlanningPanelCollapsed ? "Expand panel" : "Collapse panel"}
+          >
+            {isPlanningPanelCollapsed ? (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+              </svg>
+            )}
+          </button>
         </div>
 
-        {/* Analysis Mode Selector */}
-        <div className="space-y-3 mb-4">
-          <div className="flex gap-2">
-            <button
-              onClick={() => setAnalysisMode('region')}
-              className={`flex-1 px-3 py-2 text-xs rounded border transition-colors ${
-                analysisMode === 'region'
-                  ? 'bg-blue-600 border-blue-500 text-white'
-                  : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
-              }`}
-            >
-              🌍 Region
-            </button>
-            <button
-              onClick={() => setAnalysisMode('grid')}
-              className={`flex-1 px-3 py-2 text-xs rounded border transition-colors ${
-                analysisMode === 'grid'
-                  ? 'bg-blue-600 border-blue-500 text-white'
-                  : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
-              }`}
-            >
-              🏗️ Grid
-            </button>
-          </div>
+        {/* Collapsible content */}
+        {!isPlanningPanelCollapsed && (
+          <div className="px-4 pb-4">
+            {/* Analysis Mode Selector */}
+            <div className="space-y-3 mb-4">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setAnalysisMode('region')}
+                  className={`flex-1 px-3 py-2 text-xs rounded border transition-colors ${
+                    analysisMode === 'region'
+                      ? 'bg-blue-600 border-blue-500 text-white'
+                      : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  🌍 Region
+                </button>
+                <button
+                  onClick={() => setAnalysisMode('grid')}
+                  className={`flex-1 px-3 py-2 text-xs rounded border transition-colors ${
+                    analysisMode === 'grid'
+                      ? 'bg-blue-600 border-blue-500 text-white'
+                      : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  🏗️ Grid
+                </button>
+              </div>
 
-          {analysisMode === 'region' ? (
-            <div className="space-y-2">
-              <input
-                type="text"
-                value={selectedLocation}
-                onChange={(e) => setSelectedLocation(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter' && selectedLocation.trim()) {
-                    analyzeRegion(selectedLocation)
-                  }
-                }}
-                placeholder="City or country..."
-                className="w-full px-3 py-2 bg-[#222] border border-gray-600 text-gray-200 placeholder-gray-500 text-sm rounded focus:outline-none focus:border-blue-500"
-              />
-              <button
-                onClick={() => {
-                  if (selectedLocation.trim()) {
-                    analyzeRegion(selectedLocation)
-                  }
-                }}
-                disabled={isGeneratingGrid || !selectedLocation.trim()}
-                className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white text-sm rounded border border-green-500 transition-colors"
-              >
-                {isGeneratingGrid ? 'Analyzing...' : '🔍 Analyze'}
-              </button>
+              {analysisMode === 'region' ? (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={selectedLocation}
+                    onChange={(e) => setSelectedLocation(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && selectedLocation.trim()) {
+                        analyzeRegion(selectedLocation)
+                      }
+                    }}
+                    placeholder="City or country..."
+                    className="w-full px-3 py-2 bg-[#222] border border-gray-600 text-gray-200 placeholder-gray-500 text-sm rounded focus:outline-none focus:border-blue-500"
+                  />
+                  <button
+                    onClick={() => {
+                      if (selectedLocation.trim()) {
+                        analyzeRegion(selectedLocation)
+                      }
+                    }}
+                    disabled={isGeneratingGrid || !selectedLocation.trim()}
+                    className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white text-sm rounded border border-green-500 transition-colors"
+                  >
+                    {isGeneratingGrid ? 'Analyzing...' : '🔍 Analyze'}
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <button
+                    onClick={() => generateUrbanPlanningGrid()}
+                    disabled={isGeneratingGrid}
+                    className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white text-sm rounded border border-blue-500 transition-colors"
+                  >
+                    {isGeneratingGrid ? 'Analyzing...' : '🔄 Generate Grid'}
+                  </button>
+
+                  <div className="bg-yellow-900/30 border border-yellow-600/40 rounded p-2 text-xs text-yellow-200">
+                    Zoom 12+ then click Generate Grid
+                  </div>
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="space-y-3">
-              <button
-                onClick={() => generateUrbanPlanningGrid()}
-                disabled={isGeneratingGrid}
-                className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white text-sm rounded border border-blue-500 transition-colors"
-              >
-                {isGeneratingGrid ? 'Analyzing...' : '🔄 Generate Grid'}
-              </button>
 
-              <div className="bg-yellow-900/30 border border-yellow-600/40 rounded p-2 text-xs text-yellow-200">
-                Zoom 12+ then click Generate Grid
+            {/* Loading indicator */}
+            {isGeneratingGrid && (
+              <div className="bg-blue-900/50 border border-blue-600 rounded-lg p-3 mb-4">
+                <div className="flex items-center gap-2 text-blue-200">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
+                  <span className="text-sm">Generating development grid...</span>
+                </div>
+              </div>
+            )}
+
+            {/* Instructions */}
+            <div className="text-xs text-gray-400 mb-4 p-3 bg-gray-800 rounded border border-gray-600">
+              <div className="font-semibold text-gray-300 mb-2">📍 How to Use:</div>
+              {analysisMode === 'region' ? (
+                <div className="space-y-1">
+                  <p><strong>Region Mode:</strong> Fast analysis with just 3 API calls</p>
+                  <p>• Enter any city or country name</p>
+                  <p>• Get instant development suitability assessment</p>
+                  <p>• Entire region colored by habitability score</p>
+                  <p>• Green = Good for growth, Red = Not recommended</p>
+                </div>
+              ) : (
+                <ol className="space-y-1 list-decimal list-inside">
+                  <li>Zoom to your area of interest (zoom 12+)</li>
+                  <li>Click "Generate" to load grid data</li>
+                  <li>Click cells for detailed insights</li>
+                  <li>Green = Suitable, Red = Not recommended</li>
+                </ol>
+              )}
+              {map && (
+                <div className="mt-2 pt-2 border-t border-gray-700">
+                  <span className="text-gray-300">Current Zoom: </span>
+                  <span className={`font-bold ${map.getZoom() >= 12 ? 'text-green-400' : 'text-orange-400'}`}>
+                    {map.getZoom().toFixed(1)}
+                  </span>
+                  <span className="text-gray-500"> / 16.0 max</span>
+                </div>
+              )}
+            </div>
+
+            {/* Growth Suitability Legend */}
+            <div className="border-t border-gray-600 pt-4">
+              <div className="text-sm font-semibold text-gray-300 mb-3">Development Suitability Grid:</div>
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-4 border border-white" style={{ backgroundColor: '#00ff00' }}></div>
+                  <div>
+                    <div className="font-medium text-green-400">Excellent - High Growth Potential</div>
+                    <div className="text-gray-400">Low climate risks, ideal for major development</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-4 border border-white" style={{ backgroundColor: '#90ff00' }}></div>
+                  <div>
+                    <div className="font-medium text-green-300">Good - Suitable for Growth</div>
+                    <div className="text-gray-400">Minor risks, good for mixed development</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-4 border border-white" style={{ backgroundColor: '#ffff00' }}></div>
+                  <div>
+                    <div className="font-medium text-yellow-400">Moderate - Conditional Growth</div>
+                    <div className="text-gray-400">Requires enhanced infrastructure</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-4 border border-white" style={{ backgroundColor: '#ff9900' }}></div>
+                  <div>
+                    <div className="font-medium text-orange-400">Poor - Limited Growth</div>
+                    <div className="text-gray-400">High risk, specialized planning needed</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-4 border border-white" style={{ backgroundColor: '#ff0000' }}></div>
+                  <div>
+                    <div className="font-medium text-red-400">Critical - No Growth</div>
+                    <div className="text-gray-400">Severe risks, conservation recommended</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-gray-700 text-[10px] text-gray-500">
+                <div className="font-semibold mb-1">Data Sources (NASA):</div>
+                <div>• GIBS Earth Observation • POWER Climate Data</div>
+                <div>• Air Quality Index • Flood Risk Assessment</div>
               </div>
             </div>
-          )}
         </div>
-
-        {/* Loading indicator */}
-        {isGeneratingGrid && (
-          <div className="bg-blue-900/50 border border-blue-600 rounded-lg p-3 mb-4">
-            <div className="flex items-center gap-2 text-blue-200">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
-              <span className="text-sm">Generating development grid...</span>
-            </div>
-          </div>
         )}
-
-        {/* Instructions */}
-        <div className="text-xs text-gray-400 mb-4 p-3 bg-gray-800 rounded border border-gray-600">
-          <div className="font-semibold text-gray-300 mb-2">📍 How to Use:</div>
-          {analysisMode === 'region' ? (
-            <div className="space-y-1">
-              <p><strong>Region Mode:</strong> Fast analysis with just 3 API calls</p>
-              <p>• Enter any city or country name</p>
-              <p>• Get instant development suitability assessment</p>
-              <p>• Entire region colored by habitability score</p>
-              <p>• Green = Good for growth, Red = Not recommended</p>
-            </div>
-          ) : (
-            <ol className="space-y-1 list-decimal list-inside">
-              <li>Zoom to your area of interest (zoom 12+)</li>
-              <li>Click "Generate" to load grid data</li>
-              <li>Click cells for detailed insights</li>
-              <li>Green = Suitable, Red = Not recommended</li>
-            </ol>
-          )}
-          {map && (
-            <div className="mt-2 pt-2 border-t border-gray-700">
-              <span className="text-gray-300">Current Zoom: </span>
-              <span className={`font-bold ${map.getZoom() >= 12 ? 'text-green-400' : 'text-orange-400'}`}>
-                {map.getZoom().toFixed(1)}
-              </span>
-              <span className="text-gray-500"> / 16.0 max</span>
-            </div>
-          )}
-        </div>
-
-        {/* Growth Suitability Legend */}
-        <div className="border-t border-gray-600 pt-4">
-          <div className="text-sm font-semibold text-gray-300 mb-3">Development Suitability Grid:</div>
-          <div className="space-y-2 text-xs">
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-4 border border-white" style={{ backgroundColor: '#00ff00' }}></div>
-              <div>
-                <div className="font-medium text-green-400">Excellent - High Growth Potential</div>
-                <div className="text-gray-400">Low climate risks, ideal for major development</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-4 border border-white" style={{ backgroundColor: '#90ff00' }}></div>
-              <div>
-                <div className="font-medium text-green-300">Good - Suitable for Growth</div>
-                <div className="text-gray-400">Minor risks, good for mixed development</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-4 border border-white" style={{ backgroundColor: '#ffff00' }}></div>
-              <div>
-                <div className="font-medium text-yellow-400">Moderate - Conditional Growth</div>
-                <div className="text-gray-400">Requires enhanced infrastructure</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-4 border border-white" style={{ backgroundColor: '#ff9900' }}></div>
-              <div>
-                <div className="font-medium text-orange-400">Poor - Limited Growth</div>
-                <div className="text-gray-400">High risk, specialized planning needed</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-4 border border-white" style={{ backgroundColor: '#ff0000' }}></div>
-              <div>
-                <div className="font-medium text-red-400">Critical - No Growth</div>
-                <div className="text-gray-400">Severe risks, conservation recommended</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 pt-3 border-t border-gray-700 text-[10px] text-gray-500">
-            <div className="font-semibold mb-1">Data Sources (NASA):</div>
-            <div>• GIBS Earth Observation • POWER Climate Data</div>
-            <div>• Air Quality Index • Flood Risk Assessment</div>
-          </div>
-        </div>
       </div>
 
       <MapContainer
         key={mapId}
-        center={[37.0902, -95.7129]}
-        zoom={4}
+        center={[-6.9175, 107.6191]} // Bandung, Indonesia
+        zoom={10}
         minZoom={3}
         maxZoom={16} // Reduced from 18 to limit excessive zooming
         maxBounds={[
@@ -977,48 +1109,17 @@ export default function MapComponent({ onRegionSelect, searchResult = null }: Ma
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
         />
 
-        {/* NASA GIBS Satellite Overlays */}
-        {/* Day Temperature */}
-        {activeOverlay === 'temp-day' && (
-          <TileLayer
-            url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_Land_Surface_Temp_Day/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png`}
-            attribution='NASA GIBS - MODIS Terra Day'
-            opacity={0.65}
-            maxZoom={7}
-          />
-        )}
-        {/* Night Temperature */}
-        {activeOverlay === 'temp-night' && (
-          <TileLayer
-            url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_Land_Surface_Temp_Night/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png`}
-            attribution='NASA GIBS - MODIS Terra Night'
-            opacity={0.65}
-            maxZoom={7}
-          />
-        )}
-        {/* Temperature Anomaly */}
-        {activeOverlay === 'temp-anomaly' && (
-          <TileLayer
-            url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_Land_Surface_Temp_Day/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png`}
-            attribution='NASA GIBS - Temperature Anomaly'
-            opacity={0.7}
-            maxZoom={7}
-          />
-        )}
-        {activeOverlay === 'air-quality' && (
-          <TileLayer
-            url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Combined_MAIAC_L2G_AerosolOpticalDepth/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png`}
-            attribution='NASA GIBS'
-            opacity={0.6}
-            maxZoom={6}
-          />
-        )}
-        {activeOverlay === 'precipitation' && (
-          <TileLayer
-            url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/IMERG_Precipitation_Rate/default/${new Date().toISOString().split('T')[0]}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`}
-            attribution='NASA GIBS'
-            opacity={0.6}
-            maxZoom={8}
+        {selectedCountryGeometry && overlayFillColor && activeOverlay !== 'none' && (
+          <GeoJSON
+            key={`${activeOverlay}-${overlayFillColor}`}
+            data={selectedCountryGeometry as unknown as GeoJsonObject}
+            style={() => ({
+              color: '#ffffff',
+              weight: 1,
+              fillColor: overlayFillColor,
+              fillOpacity: 0.55,
+              opacity: 0.8,
+            })}
           />
         )}
 

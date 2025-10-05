@@ -5,7 +5,7 @@ const GIBS_BASE_URL = 'https://gibs.earthdata.nasa.gov/wmts/epsg4326/best'
 
 // WAQI (World Air Quality Index) API
 const WAQI_BASE_URL = 'https://api.waqi.info'
-const WAQI_API_KEY = process.env.WAQI_API_KEY || 'demo' // Use 'demo' key for testing
+const WAQI_API_KEY = process.env.WAQI_API_KEY || 'demo' 
 
 function getAQIQuality(aqi: number): string {
   if (aqi <= 50) return 'Good'
@@ -88,6 +88,12 @@ async function searchWAQIByCity(cityName: string): Promise<any[]> {
 
 async function fetchWAQIData(lat: number, lng: number) {
   try {
+    // Skip WAQI if using demo key (it always returns Shanghai data)
+    if (WAQI_API_KEY === 'demo') {
+      console.log('⚠️ Using demo WAQI key - skipping API call (always returns Shanghai)')
+      return null
+    }
+
     // Use geo-based nearest station (most efficient - single API call)
     const geoUrl = `${WAQI_BASE_URL}/feed/geo:${lat};${lng}/?token=${WAQI_API_KEY}`
     console.log('🌍 Fetching nearest station by geo coordinates')
@@ -104,6 +110,22 @@ async function fetchWAQIData(lat: number, lng: number) {
       if (geoData.status === 'ok' && geoData.data) {
         const aqiData = geoData.data
         const currentAQI = typeof aqiData.aqi === 'number' && aqiData.aqi > 0 ? aqiData.aqi : null
+
+        // Verify the returned station is actually near our coordinates (within 500km)
+        if (currentAQI && aqiData.city?.geo) {
+          const stationLat = aqiData.city.geo[0]
+          const stationLng = aqiData.city.geo[1]
+          const distance = Math.sqrt(
+            Math.pow((stationLat - lat) * 111, 2) +
+            Math.pow((stationLng - lng) * 111 * Math.cos(lat * Math.PI / 180), 2)
+          )
+
+          // If station is too far (e.g., demo key returning Shanghai for everywhere), reject it
+          if (distance > 500) {
+            console.log(`⚠️ Station too far: ${aqiData.city?.name} is ${Math.round(distance)}km away, skipping`)
+            return null
+          }
+        }
 
         if (currentAQI) {
           // Extract pollutant data
@@ -380,7 +402,7 @@ export async function POST(request: NextRequest) {
       success: true,
       prediction: isRealData
         ? `Air Quality Index: ${aqi} (${gibsData.quality}). Real-time data from ${waqiData?.stationName} ground station (${waqiData?.stationDistance}km away).`
-        : `Air Quality Index forecast: ${aqi} (${gibsData.quality}). Based on NASA GIBS MODIS/OMI satellite data, aerosol measurements, and pollution patterns.`,
+        : `Air Quality Index: ${aqi} (${gibsData.quality}). Estimated using NASA GIBS satellite data and geographic models. For real-time data, add WAQI_API_KEY to .env file.`,
       data: {
         location: { lat, lng },
         currentAQI: aqi,

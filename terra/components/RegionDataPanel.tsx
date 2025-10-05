@@ -148,6 +148,23 @@ function getRiskLevel(value: number, type: 'temperature' | 'airQuality' | 'flood
   return 'high'
 }
 
+function getCombinedRiskScore(temp: number, aqi: number, flood: number): number {
+  // Normalize each metric to 0-100 scale
+  const tempScore = Math.min(100, Math.max(0, ((temp - 10) / 30) * 100))
+  const aqiScore = Math.min(100, (aqi / 200) * 100)
+  const floodScore = Math.min(100, flood)
+
+  // Weighted average: temp 30%, aqi 35%, flood 35%
+  return Math.round((tempScore * 0.3) + (aqiScore * 0.35) + (floodScore * 0.35))
+}
+
+function getCombinedRiskLevel(temp: number, aqi: number, flood: number): 'low' | 'moderate' | 'high' {
+  const score = getCombinedRiskScore(temp, aqi, flood)
+  if (score < 30) return 'low'
+  if (score < 60) return 'moderate'
+  return 'high'
+}
+
 function MapModeToggle({ mapMode, onChange }: { mapMode: MapMode; onChange: (mode: MapMode) => void }) {
   const options: Array<{ id: MapMode; label: string; }> = [
     { id: 'standard', label: 'Standard'},
@@ -312,15 +329,37 @@ export default function RegionDataPanel({
               onSelectOverlay={handleOverlaySelect}
             />
 
-            {overlaySection}
+            <DataCard
+              title="Combined Risk"
+              value={getCombinedRiskScore(selectedRegion.temperature, selectedRegion.airQuality, selectedRegion.floodRisk).toString()}
+              risk={getCombinedRiskLevel(selectedRegion.temperature, selectedRegion.airQuality, selectedRegion.floodRisk)}
+              overlayType="combined"
+              activeOverlay={activeOverlay}
+              onSelectOverlay={handleOverlaySelect}
+            />
+
+            {activeOverlay !== 'none' && overlayState.overlayMetrics && overlayState.hasGeometry && overlayLegendMap[activeOverlay as Exclude<OverlayType, 'none'>] && (
+              <div className="bg-[#0f0f0f] border border-gray-900 rounded p-3">
+                <div className="text-[10px] text-gray-500 uppercase mb-2 tracking-wider">Legend</div>
+                <div className="space-y-1.5 text-xs">
+                  {overlayLegendMap[activeOverlay as Exclude<OverlayType, 'none'>].entries.map((entry) => (
+                    <div key={entry.label} className="flex items-center gap-2">
+                      <div className={`w-2.5 h-2.5 ${entry.color}`}></div>
+                      <span className="text-gray-400 text-[11px]">{entry.label}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 pt-2 border-t border-gray-900 text-[9px] text-gray-600">
+                  NASA Earth Observation Data
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
             <div className="text-center text-gray-600 mt-16 px-4">
               <p className="text-xs">Select a location on the map to view environmental metrics.</p>
             </div>
-
-            {overlaySection}
           </div>
         )}
       </div>

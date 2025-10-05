@@ -69,7 +69,7 @@ export default function Dashboard() {
     <div className="flex flex-col h-screen bg-[#0f0f0f]">
       <Navigation />
 
-      <div className="flex flex-1 overflow-hidden pt-[48px]">
+      <div className="flex flex-1 overflow-hidden pt-[60px]">
         <RegionDataPanel
           selectedRegion={selectedRegion}
           activeOverlay={activeOverlay}

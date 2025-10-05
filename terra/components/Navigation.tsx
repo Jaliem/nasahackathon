@@ -41,16 +41,16 @@ export default function Navigation() {
 
   return (
     <header className={`bg-black fixed w-full top-0 z-[1003] transition-transform duration-300 ${visible ? 'translate-y-0' : '-translate-y-full'}`}>
-      <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2.5 group">
+      <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-3 group">
           <Image
             src="/Terra_logo.jpeg"
             alt="Terra"
-            width={36}
-            height={36}
+            width={40}
+            height={40}
             className="rounded"
           />
-          <span className="text-base font-medium text-gray-300 group-hover:text-gray-100 transition-colors">
+          <span className="text-lg font-medium text-gray-300 group-hover:text-gray-100 transition-colors">
             Terra
           </span>
         </Link>
@@ -60,7 +60,7 @@ export default function Navigation() {
             <Link
               key={link.href}
               href={link.href}
-              className={`text-xs font-medium transition-colors relative py-1 ${
+              className={`text-sm font-medium transition-colors relative py-1 ${
                 pathname === link.href
                   ? 'text-gray-100'
                   : 'text-gray-500 hover:text-gray-300'
@@ -68,7 +68,7 @@ export default function Navigation() {
             >
               {link.label}
               {pathname === link.href && (
-                <span className="absolute -bottom-3 left-0 right-0 h-px bg-gray-100"></span>
+                <span className="absolute -bottom-4 left-0 right-0 h-px bg-gray-100"></span>
               )}
             </Link>
           ))}

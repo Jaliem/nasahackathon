@@ -19,7 +19,7 @@ export default function Home() {
       </div>
 
       {/* Main container with padding removed to allow for full-width sections */}
-      <main className="flex-1 flex flex-col items-center pt-16">
+      <main className="flex-1 flex flex-col items-center pt-40">
         
         {/* Top hero text with its own padding */}
         <div className="max-w-3xl text-center z-10 relative px-6">
@@ -75,7 +75,7 @@ export default function Home() {
                 >
                   World Air Quality Index (WAQI)
                 </a>{" "}
-                and{" "}
+                ,{" "}
                 <a
                   href="https://power.larc.nasa.gov/"
                   target="_blank"
@@ -83,6 +83,15 @@ export default function Home() {
                   className="text-gray-200 hover:underline"
                 >
                   NASA&apos;s POWER Project
+                </a>{""}
+                , and the{" "}
+                <a
+                  href="https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-gray-200 hover:underline"
+                >
+                  NASA&apos;s GIBS Earth Data
                 </a>
                 .
               </p>
@@ -280,10 +289,10 @@ export default function Home() {
       <footer className="py-15 border-t border-gray-800">
         <div className="max-w-7xl mx-auto px-6 text-center text-xs text-gray-600">
           <p>
-            Built using the WAQI & NASA&apos;s POWER Project observation data
+            Built using the WAQI, NASA&apos;s POWER Project & NASA&apos;s GIBS Earth observation data
           </p>
         </div>
       </footer>
-    </div>
-  );
+    </div>
+  );
 }

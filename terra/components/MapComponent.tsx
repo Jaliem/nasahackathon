@@ -1356,7 +1356,7 @@ export default function MapComponent({
         center={[-6.2088, 106.8456]} // Jakarta, Indonesia
         zoom={10}
         minZoom={3}
-        maxZoom={18} // Allow over-zooming up to level 18
+        maxZoom={16} // Allow over-zooming up to level 16
         maxBounds={[
           [-90, -180],  // Southwest coordinates
           [90, 180]     // Northeast coordinates

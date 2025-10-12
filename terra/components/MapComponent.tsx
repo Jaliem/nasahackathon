@@ -265,10 +265,21 @@ export interface MapComponentProps {
 
 
 
-function MapEventHandler({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) {
-  useMapEvents({
+function MapEventHandler({
+  onMapClick,
+  onZoomChange
+}: {
+  onMapClick: (lat: number, lng: number) => void
+  onZoomChange?: (zoom: number) => void
+}) {
+  const map = useMapEvents({
     click: (e) => {
       onMapClick(e.latlng.lat, e.latlng.lng)
+    },
+    zoomend: () => {
+      if (onZoomChange) {
+        onZoomChange(map.getZoom())
+      }
     },
   })
   return null
@@ -368,11 +379,19 @@ export default function MapComponent({
     popupAnchor: [0, -30],
   })
 
+  const zoomedOutIcon = new L.Icon({
+    iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48Y2lyY2xlIGN4PSIyNCIgY3k9IjI0IiByPSIyMCIgZmlsbD0iI2VmNDQ0NCIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjQiLz48Y2lyY2xlIGN4PSIyNCIgY3k9IjI0IiByPSI4IiBmaWxsPSIjZmZmZmZmIi8+PC9zdmc+',
+    iconSize: [48, 48],
+    iconAnchor: [24, 24],
+    popupAnchor: [0, -24],
+  })
+
   const [mounted, setMounted] = useState(false)
   const [mapId] = useState(() => `map-${Math.random().toString(36).substr(2, 9)}`)
   const [clickedLocation, setClickedLocation] = useState<RegionData | null>(null)
   const [isLoadingApi, setIsLoadingApi] = useState(false)
   const [map, setMap] = useState<L.Map | null>(null)
+  const [currentZoom, setCurrentZoom] = useState(10)
   const [urbanPlanningGrid] = useState<UrbanPlanningGrid[]>([])
   const [selectedCountryGeometry, setSelectedCountryGeometry] = useState<Feature | FeatureCollection | null>(null)
   const [overlayMetrics, setOverlayMetrics] = useState<{ temperature: number; airQuality: number; floodRisk: number } | null>(null)
@@ -1003,6 +1022,11 @@ export default function MapComponent({
     )
   }, [lastClickedCoords, map])
 
+  useEffect(() => {
+    if (!map) return
+    setCurrentZoom(map.getZoom())
+  }, [map])
+
   if (!mounted) {
     return <div className="h-full flex items-center justify-center text-gray-400">Loading map...</div>
   }
@@ -1297,7 +1321,7 @@ export default function MapComponent({
           />
         )}
 
-        <MapEventHandler onMapClick={handleMapClick} />
+        <MapEventHandler onMapClick={handleMapClick} onZoomChange={setCurrentZoom} />
 
         {/* Removed GIBS bounds rectangle - showing global overlay now */}
 
@@ -1319,7 +1343,15 @@ export default function MapComponent({
         {mapMode === 'standard' && clickedLocation && (
           <Marker
             position={[clickedLocation.lat, clickedLocation.lng]}
-            icon={customIcon}
+            icon={currentZoom < 8 ? zoomedOutIcon : customIcon}
+          />
+        )}
+
+        {/* Zoomed out marker for satellite view */}
+        {mapMode === 'gibs-overlay' && clickedLocation && currentZoom < 8 && (
+          <Marker
+            position={[clickedLocation.lat, clickedLocation.lng]}
+            icon={zoomedOutIcon}
           />
         )}
 

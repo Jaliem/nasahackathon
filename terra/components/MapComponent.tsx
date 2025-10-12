@@ -919,30 +919,31 @@ export default function MapComponent({
   })()
 
   const getGibsTileLayer = useCallback(() => {
-    if (mapMode !== 'gibs-overlay' || !gibsBounds) return null
+    if (mapMode !== 'gibs-overlay') return null
 
     const baseUrl = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best'
     const layerConfig = GIBS_LAYER_CONFIG[gibsOverlay]
     const { layerId, tileMatrixSet, maxNativeZoom, includeTimeDimension } = layerConfig
-    const boundsKey = gibsBounds ? gibsBounds.map((value) => value.toFixed(4)).join(',') : 'global'
-    const timeSegment = includeTimeDimension ? 'default/' : ''
+
+    // Use a date with better data availability (3 days ago for more reliable data)
+    const today = new Date()
+    const dataDate = new Date(today)
+    dataDate.setDate(dataDate.getDate() - 3)
+    const dateString = dataDate.toISOString().split('T')[0]
+    const timeSegment = includeTimeDimension ? `${dateString}/` : ''
 
     return (
       <TileLayer
-        key={`gibs-${gibsOverlay}-${boundsKey}`}
+        key={`gibs-${gibsOverlay}-global-${dateString}`}
         url={`${baseUrl}/${layerId}/default/${timeSegment}${tileMatrixSet}/{z}/{y}/{x}.png`}
         attribution="NASA GIBS"
-        opacity={0.7}
+        opacity={0.9}
         maxZoom={Math.max(maxNativeZoom, 12)}
         maxNativeZoom={maxNativeZoom}
         minZoom={1}
-        bounds={gibsBounds ? L.latLngBounds(
-          [gibsBounds[0], gibsBounds[1]],
-          [gibsBounds[2], gibsBounds[3]]
-        ) : undefined}
       />
     )
-  }, [gibsBounds, gibsOverlay, mapMode])
+  }, [gibsOverlay, mapMode])
 
   useEffect(() => {
     if (!onOverlayStateChange) return
@@ -1262,20 +1263,7 @@ export default function MapComponent({
           />
         )}
 
-        {mapMode === 'gibs-overlay' && gibsOverlay && gibsMaskGeometry && (
-          <GeoJSON
-            key={`gibs-mask-${gibsOverlay}`}
-            data={gibsMaskGeometry as unknown as GeoJsonObject}
-            style={() => ({
-              color: 'transparent',
-              weight: 0,
-              opacity: 0,
-              fillColor: 'transparent',
-              fillOpacity: 0,
-              fillRule: 'evenodd' as CanvasFillRule,
-            })}
-          />
-        )}
+        {/* Removed GIBS mask to show global overlay */}
 
         {mapMode === 'standard' && waterGeometry && (
           <GeoJSON
@@ -1306,32 +1294,9 @@ export default function MapComponent({
 
         <MapEventHandler onMapClick={handleMapClick} />
 
-        {mapMode === 'gibs-overlay' && gibsBounds && (
-          <Rectangle
-            bounds={[
-              [gibsBounds[0], gibsBounds[1]],
-              [gibsBounds[2], gibsBounds[3]],
-            ]}
-            pathOptions={{
-              color: '#ffffff',
-              weight: 2,
-              fillColor: 'transparent',
-              opacity: 0.9,
-              fillOpacity: 0,
-            }}
-          >
-            <Popup>
-              <div className="p-2 text-sm">
-                <div className="font-semibold">GIBS Focus Area</div>
-                <div className="text-xs text-gray-600 mt-1">
-                  Showing {gibsOverlayLabels[gibsOverlay]} overlay
-                </div>
-              </div>
-            </Popup>
-          </Rectangle>
-        )}
+        {/* Removed GIBS bounds rectangle - showing global overlay now */}
 
-        {mapMode === 'gibs-overlay' && !gibsMaskGeometry && highlightCircle && (
+        {mapMode === 'gibs-overlay' && !selectedCountryGeometry && highlightCircle && (
           <Circle
             center={highlightCircle.center}
             radius={highlightCircle.radius}

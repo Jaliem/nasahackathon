@@ -5,7 +5,8 @@
       "Bash(npm run build:*)",
       "WebFetch(domain:aqicn.org)",
       "WebSearch",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": []

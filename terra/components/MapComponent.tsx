@@ -828,6 +828,9 @@ export default function MapComponent({
 
     console.log('🗺️ Clicked coords:', { lat: normalizedLat, lng: normalizedLng })
 
+    // Store clicked coordinates to maintain view when switching modes
+    setLastClickedCoords({ lat: normalizedLat, lng: normalizedLng })
+
     // Create region data for clicked location
     setSelectedCountryGeometry(null)
     setHighlightCircle(null)
@@ -991,12 +994,14 @@ export default function MapComponent({
 
   useEffect(() => {
     if (!map || !lastClickedCoords) return
+    // Only fly to location when coordinates change, not when mode changes
+    // (mode changes recreate the map with correct center)
     map.flyTo(
       [lastClickedCoords.lat, lastClickedCoords.lng],
       mapMode === 'gibs-overlay' ? Math.max(map.getZoom(), 5) : map.getZoom(),
       { duration: 0.6 }
     )
-  }, [lastClickedCoords, map, mapMode])
+  }, [lastClickedCoords, map])
 
   if (!mounted) {
     return <div className="h-full flex items-center justify-center text-gray-400">Loading map...</div>
@@ -1255,10 +1260,10 @@ export default function MapComponent({
             data={selectedCountryGeometry as unknown as GeoJsonObject}
             style={() => ({
               color: '#ffffff',
-              weight: 1.5,
-              fillColor: 'transparent',
-              fillOpacity: 0,
-              opacity: 0.9,
+              weight: 3,
+              fillColor: '#ffffff',
+              fillOpacity: 0.15,
+              opacity: 1,
             })}
           />
         )}
